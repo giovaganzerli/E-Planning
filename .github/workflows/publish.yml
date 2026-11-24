@@ -1,0 +1,104 @@
+name: Build and publish Android update
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-main-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PORTAL_URL: ${{ secrets.PORTAL_URL }}
+      API_BASE_URL: ${{ secrets.API_BASE_URL }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Version and release notes
+        shell: bash
+        run: |
+          echo "APP_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "APP_VERSION_NAME=0.4.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/eplanning-signing.keystore" >> "$GITHUB_ENV"
+          previous=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          if [ -n "$previous" ] && git rev-parse "$previous" >/dev/null 2>&1; then
+            printf '\n## Modifiche su main\n\n' >> RELEASE_NOTES.md
+            git log --format='- %s' "$previous..HEAD" >> RELEASE_NOTES.md
+          fi
+      - name: Restore signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          key = os.environ['KEYSTORE_BASE64']
+          if not key:
+              raise SystemExit('Missing signing key secret')
+          path = Path(os.environ['ANDROID_KEYSTORE_PATH'])
+          path.write_bytes(base64.b64decode(key, validate=True))
+          path.chmod(0o600)
+          PY
+      - name: Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+      - name: Rule tests
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/rule-tests"
+          javac -d "$RUNNER_TEMP/rule-tests" app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules}.java tests/{SwapSearchTest,UpdateRulesTest}.java
+          java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.SwapSearchTest
+          java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.UpdateRulesTest
+      - name: Lint and build
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:lintDebug
+          ./gradlew --no-daemon :app:publishDebugApk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify app/build/outputs/apk/debug/*.apk
+          python3 scripts/prepare_release.py
+      - name: Publish complete release atomically
+        shell: bash
+        run: |
+          current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$current" != "$GITHUB_SHA" ]; then
+            echo 'A newer main commit exists; its workflow will publish the update.'
+            exit 0
+          fi
+          tag="v$APP_VERSION_NAME"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            draft=$(gh release view "$tag" --json isDraft --jq .isDraft)
+            if [ "$draft" != true ]; then
+              echo 'Release already published; never replace an installed version.'
+              exit 0
+            fi
+          else
+            gh release create "$tag" --draft --title "E-Planning $APP_VERSION_NAME" --notes-file RELEASE_NOTES.md --target "$GITHUB_SHA"
+          fi
+          gh release upload "$tag" app/build/outputs/apk/debug/*.apk app/build/outputs/apk/debug/update.json --clobber
+          gh release edit "$tag" --draft=false --latest --notes-file RELEASE_NOTES.md
+      - name: Remove signing key from runner
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_PATH" ]; then
+            rm -f -- "$ANDROID_KEYSTORE_PATH"
+          fi

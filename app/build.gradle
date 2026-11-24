@@ -1,0 +1,67 @@
+plugins { id 'com.android.application' }
+
+def localSecrets = new Properties()
+def secretsFile = rootProject.file('secrets.properties')
+if (secretsFile.exists()) secretsFile.withInputStream { localSecrets.load(it) }
+def configured = { name -> System.getenv(name) ?: localSecrets.getProperty(name, '') }
+def quoted = { value -> '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"' }
+def portalUrl = configured('PORTAL_URL')
+def apiBaseUrl = configured('API_BASE_URL')
+for (url in [portalUrl, apiBaseUrl]) {
+    def uri = new URI(url)
+    if (uri.scheme != 'https' || !uri.host || uri.rawUserInfo || uri.query || uri.fragment || (uri.path && uri.path != '/')) {
+        throw new GradleException('Configurare PORTAL_URL e API_BASE_URL come origini HTTPS nei Secrets o in secrets.properties (ignorato da Git).')
+    }
+}
+def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '12').toInteger()
+def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.4.0'
+def keyPath = System.getenv('ANDROID_KEYSTORE_PATH') ?: new File(System.getProperty('user.home'), '.android/debug.keystore').absolutePath
+
+android { namespace 'it.giovaganzerli.planning'; compileSdk 35
+    buildFeatures { buildConfig true }
+    defaultConfig {
+        applicationId 'it.giovaganzerli.planning'; minSdk 26; targetSdk 35; versionCode buildNumber; versionName buildVersion
+        buildConfigField 'String', 'PORTAL_URL', quoted(portalUrl.replaceAll('/$', ''))
+        buildConfigField 'String', 'API_BASE_URL', quoted(apiBaseUrl.replaceAll('/$', ''))
+        buildConfigField 'String', 'UPDATE_REPOSITORY', quoted('giovaganzerli/E-Planning')
+    }
+    signingConfigs {
+        distribution {
+            storeFile file(keyPath)
+            storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: 'android'
+            keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'androiddebugkey'
+            keyPassword System.getenv('ANDROID_KEY_PASSWORD') ?: 'android'
+        }
+    }
+    buildTypes { debug { debuggable false; signingConfig signingConfigs.distribution } }
+    sourceSets.main.assets.srcDir(layout.buildDirectory.dir('generated/releaseAssets'))
+}
+
+tasks.register('generateReleaseNotes') {
+    inputs.file(rootProject.file('RELEASE_NOTES.md'))
+    outputs.dir(layout.buildDirectory.dir('generated/releaseAssets'))
+    doLast {
+        def target = layout.buildDirectory.file('generated/releaseAssets/release-notes.txt').get().asFile
+        target.parentFile.mkdirs()
+        target.text = rootProject.file('RELEASE_NOTES.md').getText('UTF-8')
+    }
+}
+tasks.named('preBuild') { dependsOn 'generateReleaseNotes' }
+
+android.applicationVariants.all { variant ->
+    if (variant.buildType.name == 'debug') {
+        variant.outputs.all { outputFileName = "E-PLANNING-${variant.versionName}.apk" }
+    }
+}
+
+tasks.register('publishDebugApk') {
+    dependsOn 'assembleDebug'
+    doLast {
+        def outputDir = layout.buildDirectory.dir('outputs/apk/debug').get().asFile
+        def latest = new File(outputDir, "E-PLANNING-${android.defaultConfig.versionName}.apk")
+        if (!latest.isFile()) throw new GradleException('APK non trovato: i precedenti non verranno eliminati.')
+        delete fileTree(outputDir) { include '*.apk'; exclude latest.name }
+        delete rootProject.fileTree(rootProject.projectDir) { include 'I-miei-turni-*.apk' }
+        logger.lifecycle("APK pubblicato: ${latest}")
+    }
+}
