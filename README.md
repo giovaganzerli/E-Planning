@@ -4,11 +4,11 @@ Planning personale, mensile e di squadra e ricerca di cambi turno. Progetto indi
 
 ## Aggiornamenti nell'app
 
-L'icona download in testata diventa verde quando è disponibile una versione più recente. Un tocco mostra versione e note di rilascio; l'app scarica l'APK dalla Release GitHub, controlla dimensione, SHA-256, package ID, versione e firma e apre il programma di installazione Android.
+L'icona download in testata diventa verde quando è disponibile una versione più recente. Un tocco mostra versione e note di rilascio; il pulsante apre nel browser l'URL HTTPS dell'APK della Release GitHub rilevata. Il browser scarica il file e Android gestisce la successiva conferma di installazione.
 
-Android richiede il permesso **Consenti da questa fonte** per E-PLANNING e la conferma dell'installazione. Non si tratta di un aggiornamento silenzioso. Al successivo avvio vengono mostrate le novità. Impostazioni e sessione rimangono nell'app.
+Android può richiedere il permesso **Consenti da questa fonte** per il browser usato per il download, oltre alla conferma dell'installazione. E-PLANNING non scarica né installa APK e non richiede permessi per installare pacchetti. Al successivo avvio vengono mostrate le novità.
 
-Per gli APK precedenti all'introduzione dell'updater è necessaria **una sola installazione manuale** della nuova versione. Le successive passano dall'app. Le verifiche automatiche avvengono all'avvio/ritorno nell'app e ogni 5 minuti durante l'utilizzo; è possibile verificarle manualmente dall'icona.
+Le verifiche automatiche avvengono all'avvio/ritorno nell'app e ogni 5 minuti durante l'utilizzo; è possibile verificarle manualmente dall'icona. Il download e l'installazione restano sempre un'azione esplicita dell'utente nel browser.
 
 ## Pubblicazione automatica
 
