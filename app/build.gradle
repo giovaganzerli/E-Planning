@@ -13,8 +13,8 @@ for (url in [portalUrl, apiBaseUrl]) {
         throw new GradleException('Configurare PORTAL_URL e API_BASE_URL come origini HTTPS nei Secrets o in secrets.properties (ignorato da Git).')
     }
 }
-def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '12').toInteger()
-def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.4.0'
+def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '1015').toInteger()
+def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.4.15'
 def keyPath = System.getenv('ANDROID_KEYSTORE_PATH') ?: new File(System.getProperty('user.home'), '.android/debug.keystore').absolutePath
 
 android { namespace 'it.giovaganzerli.planning'; compileSdk 35

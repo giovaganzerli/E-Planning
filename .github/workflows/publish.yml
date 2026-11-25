@@ -36,8 +36,9 @@ jobs:
       - name: Version and release notes
         shell: bash
         run: |
-          echo "APP_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "APP_VERSION_NAME=0.4.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          # Keep CI releases above the 0.4.x builds tested locally (codes up to 1015).
+          echo "APP_VERSION_CODE=$((2000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "APP_VERSION_NAME=0.5.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/eplanning-signing.keystore" >> "$GITHUB_ENV"
           previous=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           if [ -n "$previous" ] && git rev-parse "$previous" >/dev/null 2>&1; then

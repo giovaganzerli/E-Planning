@@ -49,13 +49,15 @@ final class AppUpdater {
         }
     }
 
+    AppUpdater(Activity activity) {
+        this(activity, null);
+    }
     AppUpdater(Activity activity, View button) {
         this.activity = activity; this.button = button; prefs = activity.getSharedPreferences("app-updates", Activity.MODE_PRIVATE);
         try { latest = new Info(prefs.getString("latest", "")); } catch (Exception ignored) { }
-        updateButton(); button.setOnClickListener(v -> {
-            if (latest != null && latest.code > BuildConfig.VERSION_CODE) showAvailable(latest); else check(true);
-        });
+        updateButton(); if (button != null) button.setOnClickListener(v -> open());
     }
+    void open() { if (latest != null && latest.code > BuildConfig.VERSION_CODE) showAvailable(latest); else check(true); }
     void start() { main.post(() -> { if (!destroyed) showInstalledNotes(); }); main.post(poll); }
     void resume() { check(false); }
     void destroy() {
@@ -63,6 +65,7 @@ final class AppUpdater {
         if (active != null) active.disconnect();
     }
     private void updateButton() {
+        if (button == null) return;
         boolean available = latest != null && latest.code > BuildConfig.VERSION_CODE;
         button.setAlpha(available ? 1f : .65f); button.setBackgroundResource(available ? R.drawable.bg_update_available : R.drawable.bg_logout);
         button.setContentDescription(available ? "Aggiornamento disponibile: " + latest.version : "Verifica aggiornamenti");
@@ -80,13 +83,13 @@ final class AppUpdater {
                 main.post(() -> {
                     if (destroyed) return; checking = false; latest = info;
                     prefs.edit().putString("latest", info.raw).putLong("last_check", System.currentTimeMillis()).apply(); updateButton();
-                    if (manual) { if (info.code > BuildConfig.VERSION_CODE) showAvailable(info); else new AlertDialog.Builder(activity).setTitle("E-Planning " + BuildConfig.VERSION_NAME).setMessage("L'app è aggiornata.\n\n" + installedNotes()).setPositiveButton("OK", null).show(); }
+                    if (manual) { if (info.code > BuildConfig.VERSION_CODE) showAvailable(info); else new AppDialogs.Builder(activity).setTitle("E-Planning " + BuildConfig.VERSION_NAME).setMessage("L'app è aggiornata.\n\n" + installedNotes()).setPositiveButton("OK", null).show(); }
                 });
             } catch (Exception e) { main.post(() -> { if (!destroyed) { checking = false; if (manual) error("Non riesco a verificare gli aggiornamenti. Controlla la connessione e riprova."); } }); }
         });
     }
     private void showAvailable(Info info) {
-        new AlertDialog.Builder(activity).setTitle("Aggiornamento " + info.version)
+        new AppDialogs.Builder(activity).setTitle("Aggiornamento " + info.version)
             .setMessage("Versione installata: " + BuildConfig.VERSION_NAME + "\nDimensione: " + ((info.size + 1023) / 1024) + " KB\n\n" + info.notes + "\n\nSi aprirà il browser per scaricare l'APK dalla Release GitHub. Android richiederà poi la tua conferma per installarlo.")
             .setNegativeButton("Non ora", null).setPositiveButton("Apri download nel browser", (d, w) -> openBrowser(info)).show();
     }
@@ -128,8 +131,22 @@ final class AppUpdater {
     private void showInstalledNotes() {
         int previous = prefs.getInt("seen_version", 0);
         if (previous >= BuildConfig.VERSION_CODE) return;
-        String notes = installedNotes();
-        new AlertDialog.Builder(activity).setTitle("Novità · E-Planning " + BuildConfig.VERSION_NAME).setMessage(notes).setPositiveButton("Continua", (d, w) -> prefs.edit().putInt("seen_version", BuildConfig.VERSION_CODE).apply()).setCancelable(false).show();
+        String notes = conciseNotes(installedNotes());
+        new AppDialogs.Builder(activity).setTitle("Novità · E-Planning " + BuildConfig.VERSION_NAME).setMessage(notes).setPositiveButton("Continua", (d, w) -> prefs.edit().putInt("seen_version", BuildConfig.VERSION_CODE).apply()).setCancelable(false).show();
     }
-    private void error(String message) { if (!destroyed) new AlertDialog.Builder(activity).setTitle("Aggiornamenti").setMessage(message).setPositiveButton("OK", null).show(); }
+    private String conciseNotes(String notes) {
+        StringBuilder summary = new StringBuilder();
+        int count = 0;
+        for (String line : notes.split("\\r?\\n")) {
+            String point = line.trim();
+            if (!(point.startsWith("- ") || point.startsWith("* ") || point.startsWith("• "))) continue;
+            point = point.substring(2).trim();
+            if (point.isEmpty()) continue;
+            if (summary.length() > 0) summary.append("\n\n");
+            summary.append("• ").append(point.length() > 150 ? point.substring(0, 147) + "…" : point);
+            if (++count == 3) break;
+        }
+        return summary.length() == 0 ? "Miglioramenti e correzioni per un’app più semplice da usare." : summary.toString();
+    }
+    private void error(String message) { if (!destroyed) new AppDialogs.Builder(activity).setTitle("Aggiornamenti").setMessage(message).setPositiveButton("OK", null).show(); }
 }

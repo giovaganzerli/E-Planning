@@ -2,6 +2,16 @@
 
 Planning personale, mensile e di squadra e ricerca di cambi turno. Progetto indipendente, non un'app ufficiale aziendale.
 
+## Sincronizzazione Google Calendar
+
+Dalla testata apri il **Menu** → **Impostazioni**, tocca **Collega calendario**, consenti l’accesso al calendario e scegli un calendario Google già configurato sul dispositivo. Nella schermata **Settimana**, l’icona calendario accanto a **Oggi** chiede conferma prima di sincronizzare i turni; rieseguirla non duplica gli eventi e rimuove dalla settimana gli eventi creati dall’app che non sono più presenti nel planning.
+
+Dopo una sincronizzazione riuscita, il badge **✓ Calendar** resta memorizzato sul dispositivo per utente, calendario e settimana, anche riavviando l’app. Se i turni o le notifiche cambiano, indica **da aggiornare**. Ricorda l’ultima esportazione riuscita nel provider Android, non verifica le modifiche esterne o l’avvenuto caricamento sui server Google.
+
+Non sono richieste credenziali OAuth o un account aziendale: Android concede l’accesso al provider calendario locale e Google Calendar sincronizza il calendario Google selezionato.
+
+Nelle impostazioni calendario puoi abilitare due avvisi e scegliere gli anticipi (di default 1 giorno e 1 ora). Vengono salvati come promemoria dell’evento, gestiti dall’app calendario; non sono notifiche inviate da E-PLANNING. Alla sincronizzazione della settimana vengono applicati anche agli eventi già importati, con titolo `tipo di turno • E-PLANNING`.
+
 ## Aggiornamenti nell'app
 
 L'icona download in testata diventa verde quando è disponibile una versione più recente. Un tocco mostra versione e note di rilascio; il pulsante apre nel browser l'URL HTTPS dell'APK della Release GitHub rilevata. Il browser scarica il file e Android gestisce la successiva conferma di installazione.
@@ -15,7 +25,7 @@ Le verifiche automatiche avvengono all'avvio/ritorno nell'app e ogni 5 minuti du
 Ogni push su `main` avvia `.github/workflows/publish.yml`:
 
 1. Esegue test e Android Lint.
-2. Genera una versione crescente (`versionCode = 1000 + numero esecuzione`, `versionName = 0.4.<numero esecuzione>`).
+2. Genera una versione crescente (`versionCode = 2000 + numero esecuzione`, `versionName = 0.5.<numero esecuzione>`), superiore alle build locali 0.4.x.
 3. Compila un APK non debuggabile con la stessa firma degli APK già installati.
 4. Pubblica APK e `update.json` in una GitHub Release, resa pubblica solo quando entrambi i file sono pronti.
 

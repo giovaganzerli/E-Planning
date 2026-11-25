@@ -2,10 +2,17 @@ package it.giovaganzerli.planning;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.Manifest;
+import android.content.ContentProviderOperation;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.content.pm.PackageManager;
+import android.provider.CalendarContract;
 import android.graphics.Color;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
@@ -13,6 +20,8 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
+import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.webkit.CookieManager;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
@@ -20,6 +29,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.CheckBox;
 import android.widget.TextView;
@@ -35,6 +45,7 @@ import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.time.temporal.TemporalAdjusters;
@@ -61,14 +72,23 @@ public class MainActivity extends Activity {
     private static final String TEAM_MEMBERS_API = API + "PlanningManager/getCollaboratorsByTeamWithPlanning";
     private static final String PROFILE_API = BuildConfig.API_BASE_URL + "/api/v2/actor/profile";
     private static final int NAVY = Color.rgb(36, 59, 116), INK = Color.rgb(25, 42, 74), MUTED = Color.rgb(100, 116, 139);
+    private static final int CALENDAR_PERMISSION_REQUEST = 41;
+    private static final String GOOGLE_ACCOUNT_TYPE = "com.google";
+    private static final String CALENDAR_SETTINGS = "calendar-settings";
+    private static final String SELECTED_CALENDAR_ID = "selected-calendar-id";
+    private static final String SELECTED_CALENDAR_NAME = "selected-calendar-name";
+    private static final String EVENT_MARKER = "E-PLANNING:";
 
-    private enum Tab { WEEK, MONTH, TEAM, SEARCH }
+    private enum Tab { WEEK, MONTH, TEAM, SEARCH, SETTINGS }
     private enum TeamGrouping { DAY, COLLABORATOR, DAILY }
     private WebView portal;
     private LinearLayout planningContainer, weekList;
     private View header, bottomNavigation;
     private TextView status, weekLabel, weekSummary, subtitle;
-    private Button refreshButton, logoutButton, weekButton, monthButton, teamButton, searchButton, previousButton, nextButton, todayButton;
+    private Button weekButton, monthButton, teamButton, searchButton, previousButton, nextButton, todayButton;
+    private ImageButton appMenuButton, refreshButton, calendarSyncButton;
+    private TextView calendarSyncIndicator;
+    private boolean weekReady, calendarSyncing, planningReadable;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final ArrayList<Shift> shifts = new ArrayList<>();
     private final Map<String, String> collaborators = new HashMap<>();
@@ -106,16 +126,18 @@ public class MainActivity extends Activity {
         header = findViewById(R.id.header); bottomNavigation = findViewById(R.id.bottomNavigation);
         portal = findViewById(R.id.portal); planningContainer = findViewById(R.id.planningContainer); weekList = findViewById(R.id.weekList);
         status = findViewById(R.id.status); weekLabel = findViewById(R.id.weekLabel); weekSummary = findViewById(R.id.weekSummary); subtitle = findViewById(R.id.subtitle);
-        refreshButton = findViewById(R.id.refresh); logoutButton = findViewById(R.id.logout); previousButton = findViewById(R.id.previousPeriod); nextButton = findViewById(R.id.nextPeriod); todayButton = findViewById(R.id.today);
+        refreshButton = findViewById(R.id.refresh); appMenuButton = findViewById(R.id.appMenu); previousButton = findViewById(R.id.previousPeriod); nextButton = findViewById(R.id.nextPeriod); todayButton = findViewById(R.id.today);
+        calendarSyncButton = findViewById(R.id.calendarSync); calendarSyncIndicator = findViewById(R.id.calendarSyncIndicator);
+        calendarSyncButton.setOnClickListener(v -> confirmCalendarSync());
         weekButton = findViewById(R.id.openWeek); monthButton = findViewById(R.id.openMonth); teamButton = findViewById(R.id.openTeam); searchButton = findViewById(R.id.openSearch);
         int side = dp(24), top = dp(24);
         header.setOnApplyWindowInsetsListener((view, insets) -> { view.setPadding(side, top + insets.getSystemWindowInsetTop(), side, dp(24)); return insets; });
-        refreshButton.setOnClickListener(v -> loadCurrentTab()); logoutButton.setOnClickListener(v -> clearSession()); previousButton.setOnClickListener(v -> movePeriod(-1)); nextButton.setOnClickListener(v -> movePeriod(1)); todayButton.setOnClickListener(v -> goToday());
+        refreshButton.setOnClickListener(v -> loadCurrentTab()); appMenuButton.setOnClickListener(v -> showAppMenu()); previousButton.setOnClickListener(v -> movePeriod(-1)); nextButton.setOnClickListener(v -> movePeriod(1)); todayButton.setOnClickListener(v -> goToday());
         weekButton.setOnClickListener(v -> selectTab(Tab.WEEK)); monthButton.setOnClickListener(v -> selectTab(Tab.MONTH)); teamButton.setOnClickListener(v -> selectTab(Tab.TEAM));
         searchButton.setOnClickListener(v -> selectTab(Tab.SEARCH));
         renderEmpty("I turni appariranno qui", "Attendi l'accesso al portale ePlanning.");
         configurePortal(); showLogin();
-        updater = new AppUpdater(this, findViewById(R.id.appUpdate)); updater.start();
+        updater = new AppUpdater(this); updater.start();
     }
     @Override protected void onResume() { super.onResume(); if (updater != null) updater.resume(); }
 
@@ -150,6 +172,25 @@ public class MainActivity extends Activity {
         authHandler.removeCallbacks(sessionPoll);
         header.setVisibility(View.VISIBLE); planningContainer.setVisibility(View.VISIBLE); bottomNavigation.setVisibility(View.VISIBLE); portal.setVisibility(View.GONE);
         subtitle.setText("Il tuo planning, a colpo d’occhio");
+    }
+    private void showAppMenu() {
+        LinearLayout menu = new LinearLayout(this); menu.setOrientation(LinearLayout.VERTICAL); menu.setPadding(dp(6), dp(6), dp(6), dp(6)); menu.setBackgroundResource(R.drawable.bg_popup_menu);
+        PopupWindow popup = new PopupWindow(menu, dp(244), -2, true); popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT)); popup.setOutsideTouchable(true); popup.setElevation(dp(10));
+        menu.addView(menuAction("Impostazioni", R.drawable.ic_settings, () -> selectTab(Tab.SETTINGS)));
+        menu.addView(menuAction("Aggiornamenti…", R.drawable.ic_update, () -> updater.open()));
+        View divider = new View(this); divider.setBackgroundColor(Color.rgb(203, 213, 225)); menu.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
+        menu.addView(menuAction("Logout", R.drawable.ic_logout, this::clearSession));
+        popup.showAsDropDown(appMenuButton, -dp(202), dp(4));
+        for (int i = 0; i < menu.getChildCount(); i++) {
+            View item = menu.getChildAt(i);
+            if (item instanceof LinearLayout) ((LinearLayout) item).setOnClickListener(v -> { popup.dismiss(); ((Runnable) v.getTag()).run(); });
+        }
+    }
+    private View menuAction(String label, int icon, Runnable action) {
+        LinearLayout item = new LinearLayout(this); item.setGravity(Gravity.CENTER_VERTICAL); item.setPadding(dp(12), dp(10), dp(12), dp(10)); item.setTag(action);
+        ImageView image = new ImageView(this); image.setImageResource(icon); if (icon == R.drawable.ic_update) image.setColorFilter(NAVY); item.addView(image, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        TextView title = text(label, 15, INK, false); LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1); titleParams.leftMargin = dp(10); item.addView(title, titleParams);
+        item.setMinimumHeight(dp(50)); return item;
     }
 
     private void clearSession() {
@@ -197,12 +238,15 @@ public class MainActivity extends Activity {
 
     private void loadCurrentTab() {
         if (!authenticated || token.isEmpty()) { showLogin(); return; }
+        weekReady = false; planningReadable = true; calendarSyncIndicator.setVisibility(View.GONE);
+        calendarSyncButton.setVisibility(currentTab == Tab.WEEK ? View.VISIBLE : View.GONE); calendarSyncButton.setEnabled(false);
         requestGeneration++; refreshButton.setEnabled(false); shifts.clear(); collaborators.clear(); weekList.removeAllViews(); status.setVisibility(View.GONE);
         if (collaboratorUuid.isEmpty()) { loadProfile(); return; }
         switch (currentTab) {
             case MONTH: loadMonth(); break;
             case TEAM: loadTeam(); break;
             case SEARCH: loadSwapPlanning(); break;
+            case SETTINGS: loadSettings(); break;
             default: loadWeek(); break;
         }
     }
@@ -282,6 +326,17 @@ public class MainActivity extends Activity {
             } catch (Exception e) { showLoadError("Impossibile leggere i membri della squadra."); }
         });
     }
+    private void loadSettings() {
+        weekLabel.setText("Impostazioni"); weekSummary.setText("Caricamento configurazione…");
+        if (teamUuid.isEmpty()) { renderSettings(); return; }
+        LocalDate monday = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        String membersUrl = TEAM_MEMBERS_API + "?filter[teamUuid]=" + teamUuid + "&filter[startDateInterval]=" + monday + "&filter[withPolyvalences]=true";
+        request(membersUrl, raw -> {
+            parseCollaborators(raw);
+            if (!collaboratorUuid.isEmpty() && !collaborators.containsKey(collaboratorUuid)) collaborators.put(collaboratorUuid, collaboratorName.isEmpty() ? "Tu" : collaboratorName);
+            renderSettings(); complete("Impostazioni aggiornate");
+        });
+    }
     private void loadSwapOwnPlanning(LocalDate monday, boolean secondMonth) {
         LocalDate thisMonday = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
         boolean current = monday.equals(thisMonday);
@@ -317,7 +372,7 @@ public class MainActivity extends Activity {
         ArrayList<String> names = new ArrayList<>(); for (SwapSearch.Role role : roles) names.add(roleNames[role.ordinal()]); return android.text.TextUtils.join(", ", names);
     }
     private void configureSwapTeam() {
-        if (currentTab != Tab.SEARCH) return;
+        if (currentTab != Tab.SEARCH && currentTab != Tab.SETTINGS) return;
         LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setPadding(dp(12), dp(8), dp(12), dp(8));
         TextView help = text("Scorri la tabella orizzontalmente. Vendita include Cassa, QCO, Cabine, Scarico e TTP. Responsabile esclude le altre abilitazioni e i cambi. Nessuna spunta = escluso dalla ricerca.", 12, MUTED, false); content.addView(help);
         HorizontalScrollView horizontal = new HorizontalScrollView(this); LinearLayout table = new LinearLayout(this); table.setOrientation(LinearLayout.VERTICAL); horizontal.addView(table);
@@ -340,14 +395,18 @@ public class MainActivity extends Activity {
             boxes[4].setOnCheckedChangeListener((button, checked) -> { for (int i = 0; i < 4; i++) { if (checked) boxes[i].setChecked(false); boxes[i].setEnabled(!checked); } });
             cells.put(id, boxes); table.addView(row); View divider = new View(this); divider.setBackgroundColor(Color.rgb(226,232,240)); table.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         }
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Configura la tua squadra").setView(content).setNegativeButton("Annulla", null).setPositiveButton("Salva squadra", (d, which) -> {
+        AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Configura la tua squadra").setView(content).setNegativeButton("Annulla", null).setPositiveButton("Salva squadra", (d, which) -> {
             if (!authenticated || !owner.equals(collaboratorUuid) || !team.equals(teamUuid)) return;
             try {
                 JSONObject updated = storedSkills(); for (String id : ids) { CheckBox[] boxes = cells.get(id); int mask = 0; for (int i = 0; i < boxes.length; i++) if (boxes[i].isChecked()) mask |= 1 << i; updated.put(id, boxes[4].isChecked() ? 16 : mask); }
                 getSharedPreferences("swap-settings", MODE_PRIVATE).edit().putString(skillsKey(), updated.toString()).apply();
             } catch (Exception e) { showLoadError("Impossibile salvare la configurazione della squadra."); }
         }).create();
-        dialog.setOnDismissListener(d -> { if (!destroyed && authenticated && owner.equals(collaboratorUuid) && team.equals(teamUuid) && currentTab == Tab.SEARCH) renderSwapForm(); });
+        dialog.setOnDismissListener(d -> {
+            if (destroyed || !authenticated || !owner.equals(collaboratorUuid) || !team.equals(teamUuid)) return;
+            if (currentTab == Tab.SEARCH) renderSwapForm();
+            else if (currentTab == Tab.SETTINGS) renderSettings();
+        });
         dialog.show();
     }
     private Button searchAction(String label, LinearLayout parent, Runnable action) {
@@ -377,11 +436,11 @@ public class MainActivity extends Activity {
             for (Shift s : own) { CheckBox box = boxes.get(s); if (box != null) box.setEnabled(selectableSwapShift(s) && (selectedDay == null || selectedDay.equals(s.date))); }
         };
         for (CheckBox box : boxes.values()) box.setOnCheckedChangeListener((button, checked) -> updateEnabled.run()); updateEnabled.run();
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("I tuoi turni · W" + weekNumber(searchDay)).setView(scroll).setNegativeButton("Annulla", null).setPositiveButton("Seleziona", null).create();
+        AlertDialog dialog = new AppDialogs.Builder(this).setTitle("I tuoi turni · W" + weekNumber(searchDay)).setView(scroll).setNegativeButton("Annulla", null).setPositiveButton("Seleziona", null).create();
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             if (!authenticated || !owner.equals(collaboratorUuid) || generation != requestGeneration) { dialog.dismiss(); return; }
             ArrayList<Shift> selected = new ArrayList<>(); for (Shift s : own) if (boxes.containsKey(s) && boxes.get(s).isChecked()) selected.add(s);
-            if (selected.isEmpty()) { new AlertDialog.Builder(this).setMessage("Seleziona almeno un turno scambiabile.").setPositiveButton("OK", null).show(); return; }
+            if (selected.isEmpty()) { new AppDialogs.Builder(this).setTitle("Scegli i turni").setMessage("Seleziona almeno un turno scambiabile.").setPositiveButton("Ho capito", null).show(); return; }
             LocalDate date = selected.get(0).date; for (Shift s : selected) if (!date.equals(s.date)) return;
             searchSelectedShifts.clear(); searchDay = date;
             for (Shift s : selected) searchSelectedShifts.add(shiftChoiceKey(s));
@@ -394,7 +453,7 @@ public class MainActivity extends Activity {
         LinearLayout setup = new LinearLayout(this); setup.setOrientation(LinearLayout.VERTICAL); setup.setPadding(dp(12), dp(10), dp(12), dp(10)); setup.setBackgroundResource(R.drawable.bg_filter); LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2); sp.bottomMargin = dp(16); weekList.addView(setup, sp);
         setup.addView(text("LA TUA SQUADRA", 12, NAVY, true));
         setup.addView(text(configured ? "Abilitazioni configurate · puoi cercare un cambio" : "Configura le abilitazioni prima di cercare un cambio", 12, MUTED, false));
-        searchAction(configured ? "Modifica configurazione" : "Configura squadra", setup, () -> configureSwapTeam());
+        searchAction("Apri Impostazioni squadra", setup, () -> selectTab(Tab.SETTINGS));
         TextView title = text("Quando vuoi liberarti?", 20, INK, true); weekList.addView(title);
         TextView info = text("Scegli i turni da sostituire. Sono inclusi i cambi mattino/pomeriggio nello stesso giorno, a parità di ore e rispettando il minimo giornaliero di 4 ore.", 13, MUTED, false); info.setPadding(0, dp(6), 0, dp(8)); weekList.addView(info);
         ArrayList<Shift> selected = chosenSwapShifts();
@@ -461,9 +520,9 @@ public class MainActivity extends Activity {
 
     private void parseShifts(String raw) {
         try { shifts.clear(); collectShifts(new JSONTokener(raw).nextValue()); deduplicateShifts(); shifts.sort(Comparator.comparing(s -> s.from)); }
-        catch (Exception e) { shifts.clear(); status.setText("I dati del planning non sono nel formato previsto."); }
+        catch (Exception e) { planningReadable = false; shifts.clear(); status.setText("I dati del planning non sono nel formato previsto."); }
     }
-    private void appendShifts(String raw) { try { collectShifts(new JSONTokener(raw).nextValue()); deduplicateShifts(); } catch (Exception e) { status.setText("I dati del planning non sono nel formato previsto."); } }
+    private void appendShifts(String raw) { try { collectShifts(new JSONTokener(raw).nextValue()); deduplicateShifts(); } catch (Exception e) { planningReadable = false; status.setText("I dati del planning non sono nel formato previsto."); } }
     private void deduplicateShifts() { Map<String, Shift> unique = new HashMap<>(); for (Shift shift : shifts) unique.put(shift.from + "|" + shift.to + "|" + shift.collaboratorId + "|" + shift.typeLabel(), shift); shifts.clear(); shifts.addAll(unique.values()); }
     private void collectShifts(Object node) throws Exception {
         if (node instanceof JSONArray) { JSONArray array = (JSONArray) node; for (int i = 0; i < array.length(); i++) collectShifts(array.get(i)); return; }
@@ -496,6 +555,7 @@ public class MainActivity extends Activity {
     private void renderWeek() {
         weekList.removeAllViews(); weekLabel.setText("W" + weekNumber(currentWeek) + " · " + shortRange(currentWeek));
         ArrayList<Shift> visible = shiftsInPeriod(currentWeek, currentWeek.plusDays(6)); long minutes = 0; for (Shift shift : visible) minutes += Duration.between(shift.from, shift.to).toMinutes(); weekSummary.setText(visible.size() + " turni · " + hours(minutes));
+        weekReady = planningReadable; updateCalendarSyncIndicator();
         Map<LocalDate, ArrayList<Shift>> byDay = shiftsByDay();
         for (int i = 0; i < 7; i++) {
             LocalDate day = currentWeek.plusDays(i);
@@ -510,6 +570,289 @@ public class MainActivity extends Activity {
             for (int i = 0; i < 7; i++) { View row = weekList.getChildAt(i); row.setMinimumHeight(row.getHeight() + extra); }
         });
     }
+    private void renderSettings() {
+        weekList.removeAllViews(); weekLabel.setText("Impostazioni"); weekSummary.setText("Preferenze e configurazioni dell’app");
+        LinearLayout calendar = settingsSection("GOOGLE CALENDAR", "Scegli il calendario Google dove salvare i turni sincronizzati.");
+        long calendarId = selectedCalendarId();
+        calendar.addView(text(calendarId < 0 ? "Nessun calendario collegato." : "Calendario selezionato: " + selectedCalendarName(), 14, INK, false));
+        Button calendarAction = compactButton(calendarId < 0 ? "COLLEGA CALENDARIO" : "CAMBIA CALENDARIO"); calendarAction.setAllCaps(false); calendarAction.setOnClickListener(v -> chooseGoogleCalendar()); calendar.addView(calendarAction, calendarButtonParams());
+        TextView notifications = text("NOTIFICHE DEGLI EVENTI", 11, NAVY, true); notifications.setPadding(0, dp(18), 0, dp(6)); calendar.addView(notifications);
+        calendar.addView(text("Scegli fino a due avvisi prima dell’inizio del turno. Le modifiche si applicano alla prossima sincronizzazione della settimana. Le notifiche sono gestite dall’app calendario.", 12, MUTED, false));
+        addReminderSetting(calendar, 0, "Primo avviso", 1440);
+        addReminderSetting(calendar, 1, "Secondo avviso", 60);
+        weekList.addView(calendar);
+        LinearLayout team = settingsSection("IL MIO TEAM", "Gestisci le informazioni e le configurazioni della tua squadra.");
+        if (teamUuid.isEmpty()) {
+            team.addView(text("Nessuna squadra associata al tuo profilo ePlanning.", 14, MUTED, false));
+        } else if (collaborators.isEmpty()) {
+            team.addView(text("Impossibile caricare la squadra. Premi aggiorna per riprovare.", 14, MUTED, false));
+        } else {
+            boolean configured = swapConfigured();
+            team.addView(text(configured ? "Abilitazioni squadra configurate." : "Abilitazioni squadra da configurare.", 14, INK, false));
+            Button teamAction = compactButton(configured ? "MODIFICA SQUADRA" : "CONFIGURA SQUADRA"); teamAction.setAllCaps(false); teamAction.setOnClickListener(v -> configureSwapTeam()); team.addView(teamAction, calendarButtonParams());
+        }
+        weekList.addView(team);
+    }
+    private LinearLayout settingsSection(String title, String description) {
+        LinearLayout section = new LinearLayout(this); section.setOrientation(LinearLayout.VERTICAL); section.setPadding(dp(16), dp(14), dp(16), dp(14)); section.setBackgroundResource(R.drawable.bg_day);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = dp(12); section.setLayoutParams(params);
+        section.addView(text(title, 11, NAVY, true)); TextView help = text(description, 12, MUTED, false); LinearLayout.LayoutParams helpParams = new LinearLayout.LayoutParams(-1, -2); helpParams.topMargin = dp(4); helpParams.bottomMargin = dp(10); section.addView(help, helpParams);
+        return section;
+    }
+    private static final int[] REMINDER_TIMES = { 0, 5, 10, 15, 30, 60, 120, 240, 720, 1440, 2880, 10080 };
+    private static final String[] REMINDER_LABELS = { "All’inizio", "5 minuti prima", "10 minuti prima", "15 minuti prima", "30 minuti prima", "1 ora prima", "2 ore prima", "4 ore prima", "12 ore prima", "1 giorno prima", "2 giorni prima", "1 settimana prima" };
+    private void addReminderSetting(LinearLayout parent, int index, String label, int defaultMinutes) {
+        android.content.SharedPreferences prefs = getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE);
+        LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL);
+        CheckBox enabled = new CheckBox(this); enabled.setText(label); enabled.setTextSize(13); enabled.setTextColor(INK); enabled.setChecked(prefs.getBoolean("reminder-enabled-" + index, true));
+        row.addView(enabled, new LinearLayout.LayoutParams(0, -2, 1));
+        android.widget.Spinner time = new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, REMINDER_LABELS); adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); time.setAdapter(adapter);
+        int minutes = prefs.getInt("reminder-minutes-" + index, defaultMinutes);
+        for (int i = 0; i < REMINDER_TIMES.length; i++) if (REMINDER_TIMES[i] == minutes) time.setSelection(i);
+        time.setEnabled(enabled.isChecked()); time.setContentDescription("Anticipo " + label.toLowerCase(Locale.ITALIAN)); row.addView(time, new LinearLayout.LayoutParams(0, dp(48), 1.3f));
+        enabled.setOnCheckedChangeListener((button, checked) -> { prefs.edit().putBoolean("reminder-enabled-" + index, checked).apply(); time.setEnabled(checked); });
+        time.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> view, View selected, int position, long id) { prefs.edit().putInt("reminder-minutes-" + index, REMINDER_TIMES[position]).apply(); }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> view) { }
+        });
+        parent.addView(row);
+    }
+    private ArrayList<Integer> configuredReminders() {
+        android.content.SharedPreferences prefs = getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE);
+        ArrayList<Integer> minutes = new ArrayList<>();
+        for (int i = 0; i < 2; i++) if (prefs.getBoolean("reminder-enabled-" + i, true)) {
+            int value = prefs.getInt("reminder-minutes-" + i, i == 0 ? 1440 : 60);
+            if (!minutes.contains(value)) minutes.add(value);
+        }
+        return minutes;
+    }
+    private String calendarSyncKey(String owner, long calendar, LocalDate week) { return "week-sync:" + owner + ":" + calendar + ":" + week; }
+    private String weekSyncFingerprint(List<Shift> visible, List<Integer> reminders) {
+        ArrayList<String> events = new ArrayList<>(); for (Shift shift : visible) events.add(eventMarker(shift));
+        events.sort(String::compareTo); ArrayList<Integer> alerts = new ArrayList<>(reminders); alerts.sort(Integer::compareTo);
+        return events.toString() + "|" + alerts + "|" + ZoneId.systemDefault().getId();
+    }
+    private void updateCalendarSyncIndicator() {
+        boolean visible = currentTab == Tab.WEEK && authenticated;
+        calendarSyncButton.setVisibility(visible ? View.VISIBLE : View.GONE);
+        calendarSyncButton.setEnabled(visible && weekReady && !calendarSyncing);
+        calendarSyncButton.setAlpha(calendarSyncing ? .4f : 1f);
+        if (!visible) { calendarSyncIndicator.setVisibility(View.GONE); return; }
+        String saved = getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE).getString(calendarSyncKey(collaboratorUuid, selectedCalendarId(), currentWeek), "");
+        boolean synced = !saved.isEmpty();
+        boolean changed = synced && weekReady && !saved.equals(weekSyncFingerprint(shiftsInPeriod(currentWeek, currentWeek.plusDays(6)), configuredReminders()));
+        calendarSyncIndicator.setVisibility(synced ? View.VISIBLE : View.GONE);
+        calendarSyncIndicator.setText(changed ? "✓ Calendar · da aggiornare" : "✓ Calendar");
+        calendarSyncIndicator.setTextColor(changed ? Color.rgb(254, 215, 170) : Color.rgb(187, 247, 208));
+        calendarSyncButton.setColorFilter(synced ? Color.rgb(187, 247, 208) : Color.WHITE);
+        calendarSyncButton.setContentDescription(synced ? "Settimana già sincronizzata. Sincronizza nuovamente su Google Calendar" : "Sincronizza settimana su Google Calendar");
+    }
+    private void confirmCalendarSync() {
+        if (!weekReady || currentTab != Tab.WEEK || calendarSyncing) return;
+        final long calendar = selectedCalendarId();
+        if (calendar < 0) {
+            new AppDialogs.Builder(this).setTitle("Collega un calendario").setMessage("Seleziona il calendario Google nelle Impostazioni prima di sincronizzare i turni.").setNegativeButton("Annulla", null).setPositiveButton("Impostazioni", (d, w) -> selectTab(Tab.SETTINGS)).show(); return;
+        }
+        final String owner = collaboratorUuid; final LocalDate week = currentWeek; final int generation = requestGeneration;
+        ArrayList<Shift> visible = shiftsInPeriod(week, week.plusDays(6));
+        boolean synced = getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE).contains(calendarSyncKey(owner, calendar, week));
+        String message = "Settimana " + week.format(dateFormat) + " – " + week.plusDays(6).format(dateFormat) + "\nCalendario: " + selectedCalendarName() + "\n\n";
+        message += synced ? "Questa settimana è già stata sincronizzata. Vuoi aggiornarla? Titoli, turni e notifiche verranno riallineati senza duplicati." : "Vuoi sincronizzare i " + visible.size() + " turni della settimana selezionata?";
+        new AppDialogs.Builder(this).setTitle(synced ? "Settimana già sincronizzata" : "Sincronizza settimana").setMessage(message).setNegativeButton("Annulla", null).setPositiveButton(synced ? "Aggiorna" : "Sincronizza", (d, w) -> {
+            if (!authenticated || !owner.equals(collaboratorUuid) || !week.equals(currentWeek) || generation != requestGeneration || calendar != selectedCalendarId() || currentTab != Tab.WEEK) return;
+            syncWeekToCalendar(visible);
+        }).show();
+    }
+    private LinearLayout.LayoutParams calendarButtonParams() { LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(44)); params.topMargin = dp(7); return params; }
+    private long selectedCalendarId() { return getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE).getLong(SELECTED_CALENDAR_ID, -1); }
+    private String selectedCalendarName() { return getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE).getString(SELECTED_CALENDAR_NAME, "Calendario Google"); }
+    private boolean hasCalendarPermission() { return checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED; }
+    private void chooseGoogleCalendar() {
+        if (!hasCalendarPermission()) { requestPermissions(new String[] { Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR }, CALENDAR_PERMISSION_REQUEST); return; }
+        executor.execute(() -> {
+            ArrayList<CalendarChoice> calendars = new ArrayList<>();
+            try { calendars = readGoogleCalendars(); } catch (SecurityException ignored) { }
+            final ArrayList<CalendarChoice> available = calendars;
+            runOnUiThread(() -> showCalendarChoices(available));
+        });
+    }
+    private ArrayList<CalendarChoice> readGoogleCalendars() {
+            ArrayList<CalendarChoice> calendars = new ArrayList<>();
+            String[] projection = { CalendarContract.Calendars._ID, CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, CalendarContract.Calendars.ACCOUNT_NAME };
+            String selection = CalendarContract.Calendars.ACCOUNT_TYPE + "=? AND " + CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL + ">=?";
+            try (android.database.Cursor cursor = getContentResolver().query(CalendarContract.Calendars.CONTENT_URI, projection, selection, new String[] { GOOGLE_ACCOUNT_TYPE, String.valueOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) }, CalendarContract.Calendars.CALENDAR_DISPLAY_NAME + " COLLATE NOCASE")) {
+                if (cursor != null) while (cursor.moveToNext()) calendars.add(new CalendarChoice(cursor.getLong(0), cursor.getString(1), cursor.getString(2)));
+            }
+            return calendars;
+    }
+    private void showCalendarChoices(ArrayList<CalendarChoice> calendars) {
+        if (destroyed) return;
+        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setPadding(dp(18), dp(12), dp(18), dp(8));
+        TextView help = text(calendars.isEmpty() ? "Nessun calendario disponibile. Premi ↻ per richiedere la sincronizzazione con Google." : "Dove vuoi salvare i tuoi turni?\nSeleziona un calendario e premi Conferma.", 14, MUTED, false); help.setPadding(0, 0, 0, dp(14)); content.addView(help);
+        TextView syncHelp = text("Un calendario manca? Premi ↻ e attendi. Se non compare, apri Google Calendar → Impostazioni → Mostra altri e attiva la sincronizzazione del calendario.", 12, MUTED, false); syncHelp.setPadding(0, 0, 0, dp(12)); content.addView(syncHelp);
+        ScrollView scroll = new ScrollView(this);
+        android.widget.RadioGroup choices = new android.widget.RadioGroup(this);
+        CalendarChoice[] selected = { null };
+        Runnable populate = () -> {
+        long previousId = selected[0] == null ? selectedCalendarId() : selected[0].id;
+        choices.removeAllViews(); selected[0] = null;
+        for (CalendarChoice calendar : calendars) {
+            android.widget.RadioButton choice = new android.widget.RadioButton(this);
+            choice.setId(View.generateViewId()); choice.setText(calendar.name + "\n" + calendar.account + (calendar.id == selectedCalendarId() ? "\nCalendario attuale" : ""));
+            choice.setTextColor(INK); choice.setTextSize(14); choice.setPadding(dp(12), dp(12), dp(12), dp(12)); choice.setMinHeight(dp(84));
+            choice.setButtonTintList(android.content.res.ColorStateList.valueOf(NAVY));
+            choice.setBackgroundResource(R.drawable.bg_filter);
+            android.widget.RadioGroup.LayoutParams params = new android.widget.RadioGroup.LayoutParams(-1, -2); params.bottomMargin = dp(10); choices.addView(choice, params);
+            choice.setOnCheckedChangeListener((button, checked) -> { if (checked) selected[0] = calendar; });
+            if (calendar.id == previousId) choice.setChecked(true);
+        }
+        };
+        populate.run();
+        scroll.addView(choices); content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(280), Math.max(dp(100), calendars.size() * dp(100)))));
+        AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Il tuo calendario Google").setView(content).setNeutralButton(" ", null).setNegativeButton("Annulla", null).setPositiveButton("Conferma", null).create();
+        choices.setOnCheckedChangeListener((group, id) -> {
+            for (int i = 0; i < group.getChildCount(); i++) if (group.getChildAt(i).getId() == id) selected[0] = calendars.get(i);
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(selected[0] != null);
+        });
+        dialog.setOnShowListener(ignored -> {
+            Button confirm = dialog.getButton(AlertDialog.BUTTON_POSITIVE); confirm.setEnabled(selected[0] != null);
+            confirm.setOnClickListener(v -> {
+            CalendarChoice chosen = selected[0]; if (chosen == null) return;
+            getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE).edit().putLong(SELECTED_CALENDAR_ID, chosen.id).putString(SELECTED_CALENDAR_NAME, chosen.name).apply(); dialog.dismiss();
+            if (currentTab == Tab.WEEK) renderWeek();
+            else if (currentTab == Tab.SETTINGS) renderSettings();
+            });
+        Button refresh = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
+        refresh.setText(""); refresh.setContentDescription("Aggiorna elenco calendari");
+        refresh.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_refresh, 0, 0, 0);
+        refresh.setMinWidth(0); refresh.setMinimumWidth(0);
+        refresh.getLayoutParams().width = dp(56);
+        Runnable reload = () -> {
+            if (destroyed || !dialog.isShowing()) return;
+            if (!hasCalendarPermission()) { dialog.dismiss(); chooseGoogleCalendar(); return; }
+            refresh.setEnabled(false); refresh.setAlpha(.4f);
+            executor.execute(() -> {
+                try {
+                    ArrayList<CalendarChoice> updated = readGoogleCalendars();
+                    runOnUiThread(() -> {
+                        if (destroyed || !dialog.isShowing()) return;
+                        choices.setOnCheckedChangeListener(null);
+                        calendars.clear(); calendars.addAll(updated); populate.run();
+                        scroll.getLayoutParams().height = Math.min(dp(280), Math.max(dp(100), calendars.size() * dp(100))); scroll.requestLayout();
+                        choices.setOnCheckedChangeListener((group, id) -> {
+                            for (int i = 0; i < group.getChildCount(); i++) if (group.getChildAt(i).getId() == id) selected[0] = calendars.get(i);
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(selected[0] != null);
+                        });
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(selected[0] != null);
+                        help.setText(updated.isEmpty() ? "Nessun calendario ancora disponibile sul dispositivo." : updated.size() + " calendari disponibili sul dispositivo.\nSeleziona un calendario e premi Conferma.");
+                        refresh.setAlpha(1f); refresh.setEnabled(true);
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> {
+                        if (destroyed || !dialog.isShowing()) return;
+                        help.setText("Impossibile aggiornare l’elenco. Controlla i permessi calendario e riprova.");
+                        refresh.setAlpha(1f); refresh.setEnabled(true);
+                    });
+                }
+            });
+        };
+        android.database.ContentObserver observer = new android.database.ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override public void onChange(boolean selfChange) { reload.run(); }
+        };
+        getContentResolver().registerContentObserver(CalendarContract.Calendars.CONTENT_URI, true, observer);
+        dialog.setOnDismissListener(d -> getContentResolver().unregisterContentObserver(observer));
+        refresh.setOnClickListener(v -> {
+            if (!hasCalendarPermission()) { dialog.dismiss(); chooseGoogleCalendar(); return; }
+            Bundle extras = new Bundle();
+            extras.putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true);
+            extras.putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true);
+            try {
+                // Android's calendar sync adapter owns the remote Google calendar list.
+                ContentResolver.requestSync((android.accounts.Account) null, CalendarContract.AUTHORITY, extras);
+                syncHelp.setText("Sincronizzazione richiesta a Google. L’elenco si aggiorna automaticamente all’arrivo dei dati. Se il calendario manca ancora, abilitalo in Google Calendar → Impostazioni → Mostra altri.");
+                reload.run();
+            } catch (Exception e) {
+                syncHelp.setText("Impossibile richiedere la sincronizzazione. Apri Google Calendar e aggiorna da lì, poi riprova.");
+                reload.run();
+            }
+        });
+        });
+        dialog.show();
+    }
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == CALENDAR_PERMISSION_REQUEST) {
+            if (hasCalendarPermission()) chooseGoogleCalendar();
+            else new AppDialogs.Builder(this).setTitle("Permesso necessario").setMessage("Per sincronizzare i turni, consenti a E-PLANNING di leggere e modificare il calendario.").setPositiveButton("Ho capito", null).show();
+        }
+    }
+    private void syncWeekToCalendar(ArrayList<Shift> visible) {
+        if (!hasCalendarPermission()) { chooseGoogleCalendar(); return; }
+        if (calendarSyncing) return;
+        final long calendarId = selectedCalendarId();
+        final LocalDate week = currentWeek;
+        final String owner = collaboratorUuid;
+        final ArrayList<Integer> reminders = configuredReminders();
+        final String fingerprint = weekSyncFingerprint(visible, reminders);
+        if (calendarId < 0) { chooseGoogleCalendar(); return; }
+        calendarSyncing = true; updateCalendarSyncIndicator();
+        executor.execute(() -> {
+            try {
+                LocalDateTime start = week.atStartOfDay(), end = week.plusDays(7).atStartOfDay();
+                ContentResolver resolver = getContentResolver();
+                Map<String, Shift> expected = new HashMap<>();
+                ArrayList<ContentProviderOperation> operations = new ArrayList<>();
+                for (Shift shift : visible) {
+                    expected.put(eventMarker(shift), shift);
+                }
+                String[] projection = { CalendarContract.Events._ID, CalendarContract.Events.DESCRIPTION };
+                String selection = CalendarContract.Events.CALENDAR_ID + "=? AND " + CalendarContract.Events.DTSTART + ">=? AND " + CalendarContract.Events.DTSTART + "<?";
+                try (android.database.Cursor cursor = resolver.query(CalendarContract.Events.CONTENT_URI, projection, selection, new String[] { String.valueOf(calendarId), String.valueOf(toMillis(start)), String.valueOf(toMillis(end)) }, null)) {
+                    if (cursor != null) while (cursor.moveToNext()) {
+                        String marker = markerFrom(cursor.getString(1));
+                        if (marker == null) continue;
+                        Shift existing = expected.remove(marker);
+                        if (existing != null) {
+                            long id = cursor.getLong(0);
+                            operations.add(ContentProviderOperation.newUpdate(CalendarContract.Events.CONTENT_URI).withSelection(CalendarContract.Events._ID + "=?", new String[] { String.valueOf(id) }).withValues(calendarEventValues(calendarId, existing, marker, !reminders.isEmpty())).build());
+                            operations.add(ContentProviderOperation.newDelete(CalendarContract.Reminders.CONTENT_URI).withSelection(CalendarContract.Reminders.EVENT_ID + "=?", new String[] { String.valueOf(id) }).build());
+                            appendCalendarReminders(operations, id, -1, reminders);
+                        }
+                        else operations.add(ContentProviderOperation.newDelete(CalendarContract.Events.CONTENT_URI).withSelection(CalendarContract.Events._ID + "=?", new String[] { String.valueOf(cursor.getLong(0)) }).build());
+                    }
+                }
+                for (Shift shift : expected.values()) {
+                    int reference = operations.size();
+                    operations.add(ContentProviderOperation.newInsert(CalendarContract.Events.CONTENT_URI).withValues(calendarEventValues(calendarId, shift, eventMarker(shift), !reminders.isEmpty())).build());
+                    appendCalendarReminders(operations, -1, reference, reminders);
+                }
+                if (!operations.isEmpty()) resolver.applyBatch(CalendarContract.AUTHORITY, operations);
+                getSharedPreferences(CALENDAR_SETTINGS, MODE_PRIVATE).edit().putString(calendarSyncKey(owner, calendarId, week), fingerprint).commit();
+                runOnUiThread(() -> { if (!destroyed) { calendarSyncing = false; updateCalendarSyncIndicator(); } });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    if (destroyed) return;
+                    calendarSyncing = false; updateCalendarSyncIndicator();
+                    new AppDialogs.Builder(this).setTitle("Sincronizzazione non riuscita").setMessage("Controlla il permesso calendario e riprova.").setPositiveButton("Ho capito", null).show();
+                });
+            }
+        });
+    }
+    private void appendCalendarReminders(ArrayList<ContentProviderOperation> operations, long eventId, int reference, List<Integer> reminders) {
+        for (int minutes : reminders) {
+            ContentProviderOperation.Builder reminder = ContentProviderOperation.newInsert(CalendarContract.Reminders.CONTENT_URI).withValue(CalendarContract.Reminders.MINUTES, minutes).withValue(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT);
+            if (reference >= 0) reminder.withValueBackReference(CalendarContract.Reminders.EVENT_ID, reference);
+            else reminder.withValue(CalendarContract.Reminders.EVENT_ID, eventId);
+            operations.add(reminder.build());
+        }
+    }
+    private ContentValues calendarEventValues(long calendarId, Shift shift, String marker, boolean hasAlarm) {
+        ContentValues values = new ContentValues(); values.put(CalendarContract.Events.CALENDAR_ID, calendarId); values.put(CalendarContract.Events.TITLE, shift.typeLabel() + " • E-PLANNING"); values.put(CalendarContract.Events.DESCRIPTION, marker + "\nTurno importato da E-PLANNING"); values.put(CalendarContract.Events.DTSTART, toMillis(shift.from)); values.put(CalendarContract.Events.DTEND, toMillis(shift.to)); values.put(CalendarContract.Events.EVENT_TIMEZONE, ZoneId.systemDefault().getId()); values.put(CalendarContract.Events.HAS_ALARM, hasAlarm ? 1 : 0); return values;
+    }
+    private long toMillis(LocalDateTime time) { return time.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(); }
+    private String eventMarker(Shift shift) { return EVENT_MARKER + shift.from + "|" + shift.to + "|" + shift.typeLabel(); }
+    private String markerFrom(String description) { if (description == null || !description.startsWith(EVENT_MARKER)) return null; int end = description.indexOf('\n'); return end < 0 ? description : description.substring(0, end); }
     private View personalWeekRow(LocalDate day, ArrayList<Shift> list) {
         boolean today = day.equals(LocalDate.now());
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
@@ -805,7 +1148,13 @@ public class MainActivity extends Activity {
         });
     }
     private View weekCell(LocalDate day, ArrayList<Shift> list) { LinearLayout cell = new LinearLayout(this); cell.setOrientation(LinearLayout.VERTICAL); cell.setPadding(dp(4), dp(7), dp(4), dp(7)); cell.setBackgroundResource(day.equals(LocalDate.now()) ? R.drawable.bg_day_current : R.drawable.bg_week_cell); cell.setGravity(Gravity.CENTER_HORIZONTAL); LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -1, 1); p.setMargins(dp(1), 0, dp(1), 0); cell.setLayoutParams(p); TextView label = text(day.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ITALIAN).substring(0, 1).toUpperCase() + "\n" + day.getDayOfMonth(), 12, INK, true); label.setGravity(Gravity.CENTER); cell.addView(label); if (list != null) for (Shift s : list) { TextView row = text(s.from.toLocalTime() + "\n" + s.to.toLocalTime(), 10, s.color, true); row.setGravity(Gravity.CENTER); LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.topMargin = dp(7); row.setLayoutParams(rp); cell.addView(row); } return cell; }
-    private void showDayShifts(LocalDate day, ArrayList<Shift> list) { StringBuilder text = new StringBuilder(day.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ITALIAN) + " " + day.format(dateFormat)); if (list == null || list.isEmpty()) text.append("\n\nRiposo"); else for (Shift s : list) text.append("\n\n").append(s.from.toLocalTime()).append(" – ").append(s.to.toLocalTime()).append("\n").append(s.label()); new AlertDialog.Builder(this).setMessage(text).setPositiveButton("Chiudi", null).show(); }
+    private void showDayShifts(LocalDate day, ArrayList<Shift> list) {
+        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setPadding(dp(16), dp(12), dp(16), dp(12));
+        if (list == null || list.isEmpty()) content.addView(text("Nessun turno previsto · Riposo", 15, MUTED, false));
+        else for (Shift shift : list) content.addView(shiftRow(shift));
+        ScrollView scroll = new ScrollView(this); scroll.addView(content);
+        new AppDialogs.Builder(this).setTitle(capitalize(day.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ITALIAN)) + " " + day.format(dateFormat)).setView(scroll).setPositiveButton("Chiudi", null).show();
+    }
     private String weekNumber(LocalDate date) { return String.valueOf(date.get(WeekFields.ISO.weekOfWeekBasedYear())); }
     private String teamWeeksLabel(LocalDate start) { StringBuilder label = new StringBuilder(); for (int i = 0; i < teamWeekCount; i++) { if (i > 0) label.append(", "); label.append("W").append(weekNumber(start.plusWeeks(i))); } return label.toString(); }
     private String shortRange(LocalDate monday) { return monday.format(DateTimeFormatter.ofPattern("MMM", Locale.ITALIAN)).toUpperCase() + " " + monday.getDayOfMonth() + "-" + monday.plusDays(6).getDayOfMonth(); }
@@ -841,5 +1190,9 @@ public class MainActivity extends Activity {
         }
         String typeLabel() { return abbreviation.isEmpty() ? translation : abbreviation + "-" + translation; }
         String label() { String type = typeLabel(); return collaborator.isEmpty() ? type : collaborator + " · " + type; }
+    }
+    private static class CalendarChoice {
+        final long id; final String name; final String account;
+        CalendarChoice(long id, String name, String account) { this.id = id; this.name = name == null ? "Calendario Google" : name; this.account = account == null ? "" : account; }
     }
 }
