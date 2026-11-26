@@ -23,6 +23,14 @@
             </LinearLayout>
             <TextView android:id="@+id/status" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" />
         </LinearLayout>
+        <LinearLayout android:id="@+id/punchPreview" android:orientation="horizontal" android:gravity="center_vertical" android:background="@drawable/bg_punch_card" android:padding="12dp" android:layout_marginTop="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <ImageView android:src="@drawable/ic_time_clock" android:background="@drawable/bg_filter" android:padding="10dp" android:importantForAccessibility="no" android:layout_width="44dp" android:layout_height="44dp" />
+            <LinearLayout android:orientation="vertical" android:layout_marginStart="12dp" android:layout_marginEnd="10dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content">
+                <TextView android:text="Timbratura" android:textColor="#192A4A" android:textSize="16sp" android:textStyle="bold" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <TextView android:id="@+id/punchDescription" android:text="Verifica disponibilità…" android:textColor="#64748B" android:textSize="11sp" android:layout_marginTop="3dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            </LinearLayout>
+            <Button android:id="@+id/punchButton" android:text="Timbra" android:enabled="false" android:textAllCaps="false" android:textStyle="bold" android:textSize="13sp" android:textColor="#FFFFFF" android:background="@drawable/bg_punch_button" android:paddingLeft="12dp" android:paddingRight="12dp" android:minWidth="0dp" android:contentDescription="Registra la presenza di oggi" android:layout_width="wrap_content" android:layout_height="48dp" />
+        </LinearLayout>
         <ScrollView android:fillViewport="true" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="14dp">
             <LinearLayout android:id="@+id/weekList" android:orientation="vertical" android:paddingBottom="18dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
         </ScrollView>

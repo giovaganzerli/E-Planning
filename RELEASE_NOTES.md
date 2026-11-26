@@ -1,5 +1,8 @@
 # Novità
 
+- Timbratura attiva solo durante il turno corrente e con autorizzazione del portale.
+- Conferma con giorno e ora della registrazione e pulsante bloccato per evitare doppi invii nello stesso turno.
+- Riconciliazione degli invii incerti senza ripetere automaticamente la timbratura.
 - Sincronizzazione calendario dall’icona accanto a Oggi, con conferma e avviso per settimane già sincronizzate.
 - Indicatore Calendar persistente per settimana e calendario, con segnalazione dei dati da aggiornare.
 - Aggiornamento dati ePlanning spostato nell’header accanto al menu.

@@ -12,6 +12,14 @@ Non sono richieste credenziali OAuth o un account aziendale: Android concede l�
 
 Nelle impostazioni calendario puoi abilitare due avvisi e scegliere gli anticipi (di default 1 giorno e 1 ora). Vengono salvati come promemoria dell’evento, gestiti dall’app calendario; non sono notifiche inviate da E-PLANNING. Alla sincronizzazione della settimana vengono applicati anche agli eventi già importati, con titolo `tipo di turno • E-PLANNING`.
 
+## Timbratura
+
+In **Settimana**, sotto la barra blu, il pulsante registra una presenza reale solo con un turno attualmente in corso (fuso Europe/Rome) e stato `ENTRY` o `DEPARTURE` autorizzato dal portale. Il controllo usa sempre la settimana corrente, anche navigando settimane diverse, e viene aggiornato ogni 30 secondi mentre la schermata è aperta e al ritorno nell’app.
+
+Fuori turno il pulsante è disabilitato con l’indicazione della disponibilità al prossimo turno. Dopo una registrazione confermata mostra giorno e ora e rimane bloccato per quel turno, anche riaprendo l’app. Servizi consecutivi senza interruzione sono considerati un solo turno; il blocco non impedisce l’uso al turno successivo. Anche le registrazioni già visibili sul portale nel turno vengono riconosciute.
+
+Gli invii con esito incerto non vengono ripetuti automaticamente: il pulsante rimane bloccato finché una lettura dello storico conferma la registrazione. In quel caso controllare il portale o il responsabile prima di altre operazioni. L’orario del server è usato quando disponibile; in attesa dello storico, “Confermata il” indica l’ora in cui l’app ha ricevuto l’esito positivo. Nessuna retrodatazione o modifica manuale degli orari.
+
 ## Aggiornamenti nell'app
 
 L'icona download in testata diventa verde quando è disponibile una versione più recente. Un tocco mostra versione e note di rilascio; il pulsante apre nel browser l'URL HTTPS dell'APK della Release GitHub rilevata. Il browser scarica il file e Android gestisce la successiva conferma di installazione.
@@ -66,9 +74,10 @@ Test delle regole senza emulatori:
 
 ```sh
 mkdir -p .gradle/rule-tests
-javac -d .gradle/rule-tests app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules}.java tests/{SwapSearchTest,UpdateRulesTest}.java
+javac -d .gradle/rule-tests app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules,WorkdayRules}.java tests/{SwapSearchTest,UpdateRulesTest,WorkdayRulesTest}.java
 java -cp .gradle/rule-tests it.giovaganzerli.planning.SwapSearchTest
 java -cp .gradle/rule-tests it.giovaganzerli.planning.UpdateRulesTest
+java -cp .gradle/rule-tests it.giovaganzerli.planning.WorkdayRulesTest
 ```
 
 ## Limiti della ricerca cambi

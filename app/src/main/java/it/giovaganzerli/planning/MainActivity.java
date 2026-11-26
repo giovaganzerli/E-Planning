@@ -83,7 +83,7 @@ public class MainActivity extends Activity {
     private enum TeamGrouping { DAY, COLLABORATOR, DAILY }
     private WebView portal;
     private LinearLayout planningContainer, weekList;
-    private View header, bottomNavigation;
+    private View header, bottomNavigation, punchPreview;
     private TextView status, weekLabel, weekSummary, subtitle;
     private Button weekButton, monthButton, teamButton, searchButton, previousButton, nextButton, todayButton;
     private ImageButton appMenuButton, refreshButton, calendarSyncButton;
@@ -111,6 +111,7 @@ public class MainActivity extends Activity {
     private int requestGeneration;
     private boolean destroyed;
     private AppUpdater updater;
+    private WorkdayController workday;
     private Tab currentTab = Tab.WEEK;
     private LocalDate currentMonth = LocalDate.now().withDayOfMonth(1);
     private LocalDate currentWeek = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
@@ -129,6 +130,8 @@ public class MainActivity extends Activity {
         refreshButton = findViewById(R.id.refresh); appMenuButton = findViewById(R.id.appMenu); previousButton = findViewById(R.id.previousPeriod); nextButton = findViewById(R.id.nextPeriod); todayButton = findViewById(R.id.today);
         calendarSyncButton = findViewById(R.id.calendarSync); calendarSyncIndicator = findViewById(R.id.calendarSyncIndicator);
         calendarSyncButton.setOnClickListener(v -> confirmCalendarSync());
+        punchPreview = findViewById(R.id.punchPreview);
+        workday = new WorkdayController(this);
         weekButton = findViewById(R.id.openWeek); monthButton = findViewById(R.id.openMonth); teamButton = findViewById(R.id.openTeam); searchButton = findViewById(R.id.openSearch);
         int side = dp(24), top = dp(24);
         header.setOnApplyWindowInsetsListener((view, insets) -> { view.setPadding(side, top + insets.getSystemWindowInsetTop(), side, dp(24)); return insets; });
@@ -139,7 +142,8 @@ public class MainActivity extends Activity {
         configurePortal(); showLogin();
         updater = new AppUpdater(this); updater.start();
     }
-    @Override protected void onResume() { super.onResume(); if (updater != null) updater.resume(); }
+    @Override protected void onResume() { super.onResume(); if (updater != null) updater.resume(); if (workday != null) workday.resume(); }
+    @Override protected void onPause() { if (workday != null) workday.pause(); super.onPause(); }
 
     private void configurePortal() {
         portal.getSettings().setJavaScriptEnabled(true); portal.getSettings().setDomStorageEnabled(true);
@@ -197,6 +201,7 @@ public class MainActivity extends Activity {
         if (destroyed || clearingSession) return;
         clearingSession = true; final int generation = ++authGeneration; authHandler.removeCallbacksAndMessages(null);
         requestGeneration++; authenticated = false; token = ""; collaboratorUuid = ""; teamUuid = ""; collaboratorName = ""; shifts.clear(); collaborators.clear(); weekList.removeAllViews(); searchDay = LocalDate.now(); searchSelectedShifts.clear();
+        workday.session("", "");
         currentMonth = LocalDate.now().withDayOfMonth(1); currentWeek = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)); currentTeamWeek = currentWeek; currentTeamDay = LocalDate.now();
         showLogin(); portal.stopLoading(); portal.clearHistory(); portal.clearFormData(); portal.clearCache(true);
         // Navigation can cancel evaluateJavascript callbacks: always allow cleanup to finish.
@@ -227,6 +232,8 @@ public class MainActivity extends Activity {
     }
     private void goToday() { LocalDate monday = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)); if (currentTab == Tab.SEARCH) { searchDay = LocalDate.now(); searchSelectedShifts.clear(); } else if (currentTab == Tab.MONTH) currentMonth = LocalDate.now().withDayOfMonth(1); else if (currentTab == Tab.TEAM) { currentTeamWeek = monday; currentTeamDay = LocalDate.now(); } else currentWeek = monday; loadCurrentTab(); }
     private void updateNavigation() {
+        punchPreview.setVisibility(currentTab == Tab.WEEK ? View.VISIBLE : View.GONE);
+        workday.visible(currentTab == Tab.WEEK);
         Button[] buttons = { weekButton, monthButton, teamButton, searchButton };
         Tab[] tabs = { Tab.WEEK, Tab.MONTH, Tab.TEAM, Tab.SEARCH };
         for (int i = 0; i < buttons.length; i++) {
@@ -238,6 +245,7 @@ public class MainActivity extends Activity {
 
     private void loadCurrentTab() {
         if (!authenticated || token.isEmpty()) { showLogin(); return; }
+        if (currentTab == Tab.WEEK) workday.refresh();
         weekReady = false; planningReadable = true; calendarSyncIndicator.setVisibility(View.GONE);
         calendarSyncButton.setVisibility(currentTab == Tab.WEEK ? View.VISIBLE : View.GONE); calendarSyncButton.setEnabled(false);
         requestGeneration++; refreshButton.setEnabled(false); shifts.clear(); collaborators.clear(); weekList.removeAllViews(); status.setVisibility(View.GONE);
@@ -262,6 +270,7 @@ public class MainActivity extends Activity {
                 JSONObject team = condition == null ? null : condition.optJSONObject("team");
                 String resolvedTeam = team == null ? "" : team.optString("uuid", "");
                 collaboratorUuid = uuid; teamUuid = validUuid(resolvedTeam) ? resolvedTeam : "";
+                workday.session(token, collaboratorUuid);
                 collaboratorName = (person.optString("name", "") + " " + person.optString("firstLastName", "")).trim();
                 loadCurrentTab();
             } catch (Exception e) { showLoadError("Impossibile identificare il collaboratore dal profilo ePlanning. Premi aggiorna per riprovare."); }
@@ -1171,7 +1180,7 @@ public class MainActivity extends Activity {
         return luminance > .179 ? Color.BLACK : Color.WHITE;
     }
     private int lighten(int color, float amount) { int r = (int) (Color.red(color) + (255 - Color.red(color)) * amount), g = (int) (Color.green(color) + (255 - Color.green(color)) * amount), b = (int) (Color.blue(color) + (255 - Color.blue(color)) * amount); return Color.rgb(r, g, b); }
-    @Override protected void onDestroy() { destroyed = true; if (updater != null) updater.destroy(); authGeneration++; authHandler.removeCallbacksAndMessages(null); requestGeneration++; executor.shutdownNow(); portal.destroy(); super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed = true; if (updater != null) updater.destroy(); if (workday != null) workday.destroy(); authGeneration++; authHandler.removeCallbacksAndMessages(null); requestGeneration++; executor.shutdownNow(); portal.destroy(); super.onDestroy(); }
 
     private static class Shift {
         LocalDateTime from, to; LocalDate date; String translation, abbreviation, collaborator, collaboratorId; int color;

@@ -78,9 +78,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/rule-tests"
-          javac -d "$RUNNER_TEMP/rule-tests" app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules}.java tests/{SwapSearchTest,UpdateRulesTest}.java
+          javac -d "$RUNNER_TEMP/rule-tests" app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules,WorkdayRules}.java tests/{SwapSearchTest,UpdateRulesTest,WorkdayRulesTest}.java
           java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.SwapSearchTest
           java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.UpdateRulesTest
+          java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.WorkdayRulesTest
       - name: Lint and build
         run: |
           chmod +x gradlew
