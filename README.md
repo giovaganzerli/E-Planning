@@ -22,18 +22,18 @@ Gli invii con esito incerto non vengono ripetuti automaticamente: il pulsante ri
 
 ## Aggiornamenti nell'app
 
-L'icona download in testata diventa verde quando è disponibile una versione più recente. Un tocco mostra versione e note di rilascio; il pulsante apre nel browser l'URL HTTPS dell'APK della Release GitHub rilevata. Il browser scarica il file e Android gestisce la successiva conferma di installazione.
+Quando è disponibile una versione più recente, un pallino rosso appare sul pulsante menu nell’header e sulla voce **Aggiornamenti…**. La segnalazione resta attiva fino all’installazione, anche se si apre o chiude il menu. La voce mostra versione e un massimo di quattro brevi novità; il pulsante apre nel browser l’APK della Release GitHub rilevata. Se l’app è aggiornata, il popup mostra la versione corrente e lo stesso riepilogo sintetico, senza lo storico delle versioni.
 
 Android può richiedere il permesso **Consenti da questa fonte** per il browser usato per il download, oltre alla conferma dell'installazione. E-PLANNING non scarica né installa APK e non richiede permessi per installare pacchetti. Al successivo avvio vengono mostrate le novità.
 
-Le verifiche automatiche avvengono all'avvio/ritorno nell'app e ogni 5 minuti durante l'utilizzo; è possibile verificarle manualmente dall'icona. Il download e l'installazione restano sempre un'azione esplicita dell'utente nel browser.
+Le verifiche automatiche avvengono all'avvio/ritorno nell'app e ogni 5 minuti durante l'utilizzo; è possibile verificarle manualmente da **Menu → Aggiornamenti…**. Il download e l'installazione restano sempre un'azione esplicita dell'utente nel browser.
 
 ## Pubblicazione automatica
 
 Ogni push su `main` avvia `.github/workflows/publish.yml`:
 
 1. Esegue test e Android Lint.
-2. Genera una versione crescente (`versionCode = 2000 + numero esecuzione`, `versionName = 0.5.<numero esecuzione>`), superiore alle build locali 0.4.x.
+2. Genera una versione crescente (`versionCode = max(2000, versionCode locale) + numero esecuzione`, `versionName = 0.5.<versionCode - 2000>`), superiore anche alle build locali di prova. Il valore locale di base deve restare crescente.
 3. Compila un APK non debuggabile con la stessa firma degli APK già installati.
 4. Pubblica APK e `update.json` in una GitHub Release, resa pubblica solo quando entrambi i file sono pronti.
 

@@ -87,6 +87,7 @@ public class MainActivity extends Activity {
     private TextView status, weekLabel, weekSummary, subtitle;
     private Button weekButton, monthButton, teamButton, searchButton, previousButton, nextButton, todayButton;
     private ImageButton appMenuButton, refreshButton, calendarSyncButton;
+    private View appMenuBadge, updatesMenuBadge, updatesMenuItem;
     private TextView calendarSyncIndicator;
     private boolean weekReady, calendarSyncing, planningReadable;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -128,6 +129,7 @@ public class MainActivity extends Activity {
         portal = findViewById(R.id.portal); planningContainer = findViewById(R.id.planningContainer); weekList = findViewById(R.id.weekList);
         status = findViewById(R.id.status); weekLabel = findViewById(R.id.weekLabel); weekSummary = findViewById(R.id.weekSummary); subtitle = findViewById(R.id.subtitle);
         refreshButton = findViewById(R.id.refresh); appMenuButton = findViewById(R.id.appMenu); previousButton = findViewById(R.id.previousPeriod); nextButton = findViewById(R.id.nextPeriod); todayButton = findViewById(R.id.today);
+        appMenuBadge = findViewById(R.id.appMenuBadge);
         calendarSyncButton = findViewById(R.id.calendarSync); calendarSyncIndicator = findViewById(R.id.calendarSyncIndicator);
         calendarSyncButton.setOnClickListener(v -> confirmCalendarSync());
         punchPreview = findViewById(R.id.punchPreview);
@@ -140,10 +142,10 @@ public class MainActivity extends Activity {
         searchButton.setOnClickListener(v -> selectTab(Tab.SEARCH));
         renderEmpty("I turni appariranno qui", "Attendi l'accesso al portale ePlanning.");
         configurePortal(); showLogin();
-        updater = new AppUpdater(this); updater.start();
+        updater = new AppUpdater(this); updater.setOnAvailabilityChanged(this::updateAvailabilityBadges); updater.start();
     }
     @Override protected void onResume() { super.onResume(); if (updater != null) updater.resume(); if (workday != null) workday.resume(); }
-    @Override protected void onPause() { if (workday != null) workday.pause(); super.onPause(); }
+    @Override protected void onPause() { if (workday != null) workday.pause(); if (updater != null) updater.pause(); super.onPause(); }
 
     private void configurePortal() {
         portal.getSettings().setJavaScriptEnabled(true); portal.getSettings().setDomStorageEnabled(true);
@@ -181,9 +183,12 @@ public class MainActivity extends Activity {
         LinearLayout menu = new LinearLayout(this); menu.setOrientation(LinearLayout.VERTICAL); menu.setPadding(dp(6), dp(6), dp(6), dp(6)); menu.setBackgroundResource(R.drawable.bg_popup_menu);
         PopupWindow popup = new PopupWindow(menu, dp(244), -2, true); popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT)); popup.setOutsideTouchable(true); popup.setElevation(dp(10));
         menu.addView(menuAction("Impostazioni", R.drawable.ic_settings, () -> selectTab(Tab.SETTINGS)));
-        menu.addView(menuAction("Aggiornamenti…", R.drawable.ic_update, () -> updater.open()));
+        updatesMenuItem = menuAction("Aggiornamenti…", R.drawable.ic_update, () -> updater.open());
+        menu.addView(updatesMenuItem);
+        updateAvailabilityBadges();
         View divider = new View(this); divider.setBackgroundColor(Color.rgb(203, 213, 225)); menu.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         menu.addView(menuAction("Logout", R.drawable.ic_logout, this::clearSession));
+        popup.setOnDismissListener(() -> { updatesMenuBadge = null; updatesMenuItem = null; });
         popup.showAsDropDown(appMenuButton, -dp(202), dp(4));
         for (int i = 0; i < menu.getChildCount(); i++) {
             View item = menu.getChildAt(i);
@@ -194,7 +199,20 @@ public class MainActivity extends Activity {
         LinearLayout item = new LinearLayout(this); item.setGravity(Gravity.CENTER_VERTICAL); item.setPadding(dp(12), dp(10), dp(12), dp(10)); item.setTag(action);
         ImageView image = new ImageView(this); image.setImageResource(icon); if (icon == R.drawable.ic_update) image.setColorFilter(NAVY); item.addView(image, new LinearLayout.LayoutParams(dp(28), dp(28)));
         TextView title = text(label, 15, INK, false); LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1); titleParams.leftMargin = dp(10); item.addView(title, titleParams);
+        if (icon == R.drawable.ic_update) {
+            updatesMenuBadge = new View(this); updatesMenuBadge.setBackgroundResource(R.drawable.bg_notification_dot);
+            updatesMenuBadge.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(dp(10), dp(10)); badgeParams.leftMargin = dp(10);
+            item.addView(updatesMenuBadge, badgeParams);
+        }
         item.setMinimumHeight(dp(50)); return item;
+    }
+    private void updateAvailabilityBadges() {
+        boolean available = updater != null && updater.hasUpdate();
+        appMenuBadge.setVisibility(available ? View.VISIBLE : View.GONE);
+        appMenuButton.setContentDescription(available ? "Apri menu · aggiornamento disponibile" : "Apri menu");
+        if (updatesMenuBadge != null) updatesMenuBadge.setVisibility(available ? View.VISIBLE : View.GONE);
+        if (updatesMenuItem != null) updatesMenuItem.setContentDescription(available ? "Aggiornamenti · nuova versione disponibile" : "Aggiornamenti");
     }
 
     private void clearSession() {

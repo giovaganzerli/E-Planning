@@ -36,9 +36,16 @@ jobs:
       - name: Version and release notes
         shell: bash
         run: |
-          # Keep CI releases above the 0.4.x builds tested locally (codes up to 1015).
-          echo "APP_VERSION_CODE=$((2000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-          echo "APP_VERSION_NAME=0.5.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          # Keep releases newer than local test builds as well as previous CI runs.
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          source = Path("app/build.gradle").read_text()
+          local_code = int(re.search(r"def buildNumber = .*?\?: '(\d+)'", source).group(1))
+          code = max(2000, local_code) + int(os.environ["GITHUB_RUN_NUMBER"])
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"APP_VERSION_CODE={code}\nAPP_VERSION_NAME=0.5.{code - 2000}\n")
+          PY
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/eplanning-signing.keystore" >> "$GITHUB_ENV"
           previous=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
           if [ -n "$previous" ] && git rev-parse "$previous" >/dev/null 2>&1; then

@@ -1,5 +1,12 @@
 # Novità
 
+- Aggiornamenti · controllo automatico e pallini di notifica nel menu.
+- Novità · riepiloghi brevi e schematici.
+- Timbratura · conferma con data e ora, senza doppi invii.
+- Calendario · sincronizzazione settimanale con stato salvato.
+
+## Dettagli e versioni precedenti
+
 - Timbratura attiva solo durante il turno corrente e con autorizzazione del portale.
 - Conferma con giorno e ora della registrazione e pulsante bloccato per evitare doppi invii nello stesso turno.
 - Riconciliazione degli invii incerti senza ripetere automaticamente la timbratura.
