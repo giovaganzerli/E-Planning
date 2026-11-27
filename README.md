@@ -67,7 +67,7 @@ Secrets richiesti nelle impostazioni GitHub Actions:
 |---|---|
 | `PORTAL_URL` | Origine HTTPS del portale di login |
 | `API_BASE_URL` | Origine HTTPS delle API |
-| `EFFIPLAN_ORIGIN` | Origine HTTPS di Effiplan, senza percorsi (opzionale: senza questa configurazione la scelta Effiplan non è attivabile) |
+| `EFFIPLAN_ORIGIN` | Origine HTTPS di Effiplan, senza percorsi (obbligatoria, anche per le build pubblicate) |
 | `ANDROID_KEYSTORE_BASE64` | Keystore di distribuzione codificato in base64 |
 | `ANDROID_KEYSTORE_PASSWORD` | Password del keystore |
 | `ANDROID_KEY_ALIAS` | Alias della chiave |
@@ -96,6 +96,8 @@ L'APK locale resta in `app/build/outputs/apk/debug/`; gli APK precedenti vengono
 
 Test delle regole senza emulatori:
 
+La pubblicazione verifica subito che entrambi i portali siano configurati nei Secrets, senza scrivere le origini nei log. Anche Gradle rifiuta una configurazione Effiplan assente: non può più essere pubblicato un APK con la relativa scelta disabilitata per un Secret mancante.
+
 ```sh
 mkdir -p .gradle/rule-tests
 javac -d .gradle/rule-tests app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules,WorkdayRules,PlanningPortal,EffiplanRules}.java tests/{SwapSearchTest,UpdateRulesTest,WorkdayRulesTest,PortalRulesTest}.java
@@ -103,6 +105,7 @@ java -cp .gradle/rule-tests it.giovaganzerli.planning.SwapSearchTest
 java -cp .gradle/rule-tests it.giovaganzerli.planning.UpdateRulesTest
 java -cp .gradle/rule-tests it.giovaganzerli.planning.WorkdayRulesTest
 java -cp .gradle/rule-tests it.giovaganzerli.planning.PortalRulesTest
+python3 -m unittest discover -s tests -p 'test_*.py'
 ./gradlew :app:testEffiplanData
 ```
 

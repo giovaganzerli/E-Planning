@@ -1,5 +1,10 @@
 # Novità
 
+- Effiplan · corretta la configurazione della Release per abilitarne la selezione.
+- Pubblicazione · bloccate le build con configurazione di un portale mancante.
+
+## Modifiche precedenti
+
 - Effiplan · settimana da domenica a sabato.
 - Ore · riepiloghi e calendario allineati alla settimana Effiplan.
 - Cambi turno · ricerca entro la stessa settimana domenica–sabato.

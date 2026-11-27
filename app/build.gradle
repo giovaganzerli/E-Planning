@@ -8,20 +8,14 @@ def quoted = { value -> '"' + value.replace('\\', '\\\\').replace('"', '\\"') + 
 def portalUrl = configured('PORTAL_URL')
 def apiBaseUrl = configured('API_BASE_URL')
 def effiplanOrigin = configured('EFFIPLAN_ORIGIN')
-for (url in [portalUrl, apiBaseUrl]) {
+for (url in [portalUrl, apiBaseUrl, effiplanOrigin]) {
     def uri = new URI(url)
     if (uri.scheme != 'https' || !uri.host || uri.rawUserInfo || uri.query || uri.fragment || (uri.path && uri.path != '/')) {
-        throw new GradleException('Configurare PORTAL_URL e API_BASE_URL come origini HTTPS nei Secrets o in secrets.properties (ignorato da Git).')
+        throw new GradleException('Configurare PORTAL_URL, API_BASE_URL ed EFFIPLAN_ORIGIN come origini HTTPS nei Secrets o in secrets.properties (ignorato da Git).')
     }
 }
-if (effiplanOrigin) {
-    def uri = new URI(effiplanOrigin)
-    if (uri.scheme != 'https' || !uri.host || uri.rawUserInfo || uri.query || uri.fragment || (uri.path && uri.path != '/')) {
-        throw new GradleException('EFFIPLAN_ORIGIN deve essere una origine HTTPS senza percorsi.')
-    }
-}
-def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2018').toInteger()
-def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.18'
+def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2019').toInteger()
+def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.19'
 def keyPath = System.getenv('ANDROID_KEYSTORE_PATH') ?: new File(System.getProperty('user.home'), '.android/debug.keystore').absolutePath
 
 android { namespace 'it.giovaganzerli.planning'; compileSdk 35
