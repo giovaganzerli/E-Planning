@@ -14,8 +14,8 @@ for (url in [portalUrl, apiBaseUrl, effiplanOrigin]) {
         throw new GradleException('Configurare PORTAL_URL, API_BASE_URL ed EFFIPLAN_ORIGIN come origini HTTPS nei Secrets o in secrets.properties (ignorato da Git).')
     }
 }
-def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2019').toInteger()
-def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.19'
+def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2031').toInteger()
+def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.31'
 def keyPath = System.getenv('ANDROID_KEYSTORE_PATH') ?: new File(System.getProperty('user.home'), '.android/debug.keystore').absolutePath
 
 android { namespace 'it.giovaganzerli.planning'; compileSdk 35
@@ -58,7 +58,11 @@ tasks.register('compileEffiplanFixtures', JavaCompile) {
         'src/main/java/it/giovaganzerli/planning/EffiplanRules.java',
         'src/main/java/it/giovaganzerli/planning/WorkdayRules.java',
         'src/main/java/it/giovaganzerli/planning/SwapSearch.java',
-        rootProject.file('tests/EffiplanDataTest.java'))
+        'src/main/java/it/giovaganzerli/planning/SetupRules.java',
+        'src/main/java/it/giovaganzerli/planning/PlanningPortal.java',
+        'src/main/java/it/giovaganzerli/planning/SetupData.java',
+        rootProject.file('tests/EffiplanDataTest.java'),
+        rootProject.file('tests/SetupDataTest.java'))
     classpath = configurations.effiplanFixtures
     destinationDirectory = layout.buildDirectory.dir('effiplan-fixtures')
     options.release = 17
@@ -67,6 +71,11 @@ tasks.register('testEffiplanData', JavaExec) {
     dependsOn 'compileEffiplanFixtures'
     classpath = files(layout.buildDirectory.dir('effiplan-fixtures')) + configurations.effiplanFixtures
     mainClass = 'it.giovaganzerli.planning.EffiplanDataTest'
+}
+tasks.register('testSetupData', JavaExec) {
+    dependsOn 'compileEffiplanFixtures'
+    classpath = files(layout.buildDirectory.dir('effiplan-fixtures')) + configurations.effiplanFixtures
+    mainClass = 'it.giovaganzerli.planning.SetupDataTest'
 }
 
 android.applicationVariants.all { variant ->

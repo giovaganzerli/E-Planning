@@ -99,6 +99,7 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon :app:lintDebug
           ./gradlew --no-daemon :app:testEffiplanData
+          ./gradlew --no-daemon :app:testSetupData
           ./gradlew --no-daemon :app:publishDebugApk
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify app/build/outputs/apk/debug/*.apk
           python3 scripts/prepare_release.py

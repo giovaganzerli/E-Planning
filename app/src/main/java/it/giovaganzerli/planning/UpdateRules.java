@@ -7,6 +7,9 @@ import java.util.LinkedHashSet;
 final class UpdateRules {
     static final long MAX_APK_BYTES = 150L * 1024 * 1024;
     static boolean hasUpdate(int installed, int available) { return available > installed; }
+    static boolean showInstalledNotes(boolean accountReady, boolean resumed, boolean showing, int seen, int installed) {
+        return accountReady && resumed && !showing && seen < installed;
+    }
     static String summarizeNotes(String notes, int maxItems) {
         LinkedHashSet<String> points = new LinkedHashSet<>();
         if (notes != null && maxItems > 0) for (String line : notes.split("\\r?\\n")) {

@@ -105,7 +105,10 @@ final class EffiplanData {
         return choices;
     }
     static JSONObject population(JSONArray choices, String key) throws Exception {
-        for (int i = 0; i < choices.length(); i++) if (key.equals(choices.getJSONObject(i).getString("key"))) return choices.getJSONObject(i);
+        for (int i = 0; i < choices.length(); i++) {
+            JSONObject choice = choices.getJSONObject(i);
+            if (key.equals(choice.getString("key")) || key.equals(populationKey(choice.getString("type"), choice.getString("value")))) return choice;
+        }
         throw new Exception("Popolazione non più disponibile: scegli nuovamente la squadra.");
     }
     static JSONArray absences(JSONObject content, LocalDate start, LocalDate end) throws Exception {

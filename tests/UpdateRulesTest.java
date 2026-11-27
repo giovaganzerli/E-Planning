@@ -14,6 +14,11 @@ public class UpdateRulesTest {
         check(UpdateRules.hex(new byte[]{0, 15, -1}).equals("000fff"), "checksum hex");
         check(UpdateRules.hasUpdate(2008, 2009), "new release enables both notification indicators");
         check(!UpdateRules.hasUpdate(2008, 2008) && !UpdateRules.hasUpdate(2008, 2005), "equal and older releases do not show a badge");
+        check(!UpdateRules.showInstalledNotes(false, true, false, 0, 2029), "no installed notes during login or onboarding");
+        check(UpdateRules.showInstalledNotes(true, true, false, 0, 2029), "installed notes after account setup");
+        check(!UpdateRules.showInstalledNotes(true, false, false, 0, 2029), "no installed notes while app is paused");
+        check(!UpdateRules.showInstalledNotes(true, true, true, 0, 2029), "no duplicate installed notes dialog");
+        check(!UpdateRules.showInstalledNotes(true, true, false, 2029, 2029), "acknowledged installed notes remain hidden");
         String notes = "# Novità\n\n- **Aggiornamenti** · pallini nel menu.\n- Calendario · stato salvato.\n- Timbratura · conferma.\n- Quarta novità.\n## Versioni precedenti\n- Non mostrare questa voce.";
         String concise = UpdateRules.summarizeNotes(notes, 4);
         check(concise.split("\n").length == 4 && !concise.contains("**") && !concise.contains("Non mostrare"), "compact bullets without historical notes");

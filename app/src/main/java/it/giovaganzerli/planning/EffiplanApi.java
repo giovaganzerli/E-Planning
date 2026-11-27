@@ -21,6 +21,7 @@ final class EffiplanApi {
     private final java.util.Map<String, Integer> models = new java.util.HashMap<>();
     private final java.util.Map<String, JSONObject> displays = new java.util.HashMap<>();
     private final java.util.Map<String, Long> displayTimes = new java.util.HashMap<>();
+    private SetupRules.Team verifiedMembership;
     EffiplanApi(String origin, String token, String role, String user) throws Exception {
         URI uri = new URI(origin);
         if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null || !(uri.getPath().isEmpty() || "/".equals(uri.getPath()))) throw new Exception("Origine non valida");
@@ -57,6 +58,63 @@ final class EffiplanApi {
         return displays.get(function);
     }
     String scopeKey() { return EffiplanRules.scopeKey(origin, role); }
+    SetupRules.Team membership() throws Exception {
+        try {
+            verifiedMembership = SetupData.effiplanMembership(call("/v1/synoptic/" + encode(user) + "/personal?roleId=" + encode(role), null));
+        } catch (AuthenticationException expired) { throw expired; }
+        catch (Exception unavailable) {
+            try {
+                verifiedMembership = SetupData.effiplanMembership(call("/v2/employees/" + encode(user) + "?categories=identity&roleId=" + encode(role), null));
+            } catch (AuthenticationException expired) { throw expired; }
+            catch (Exception denied) {
+                JSONArray sections = call("/v2/settings/lists/types/SEH?roleId=" + encode(role), null).getJSONArray("SEH");
+                java.util.List<SetupRules.Team> matches = new java.util.ArrayList<>();
+                LocalDate start = PlanningPortal.EFFIPLAN.weekStart(LocalDate.now());
+                for (int i = 0; i < sections.length(); i++) {
+                    JSONObject section = sections.getJSONObject(i);
+                    SetupRules.Team candidate = new SetupRules.Team(EffiplanData.populationKey("SEH", section.getString("value")), section.getString("title"));
+                    if (sectionRoster(candidate, start).containsKey(user)) matches.add(candidate);
+                }
+                verifiedMembership = SetupData.uniqueMembership(matches);
+            }
+        }
+        return verifiedMembership;
+    }
+    private JSONObject ownGroup(SetupRules.Team team) throws Exception {
+        if (!team.key.startsWith("SEH:") || team.key.length() <= 4) throw new Exception("Squadra effettiva non valida");
+        return new JSONObject().put("type", "SEH").put("value", team.key.substring(4)).put("title", team.title);
+    }
+    java.util.Map<String, String> membershipRoster(SetupRules.Team team, LocalDate start) throws Exception {
+        if (verifiedMembership == null || !verifiedMembership.key.equals(team.key)) {
+            boolean authorized = false;
+            for (SetupRules.Team available : SetupData.effiplanTeams(populations()))
+                if (available.key.equals(team.key)) authorized = true;
+            if (!authorized) throw new Exception("Squadra non disponibile per il profilo");
+        }
+        return sectionRoster(team, start);
+    }
+    private java.util.Map<String, String> sectionRoster(SetupRules.Team team, LocalDate start) throws Exception {
+        JSONObject group = ownGroup(team);
+        JSONObject request = eventsRequest("UPC", start, start.plusDays(6), new JSONArray().put("pst"))
+            .put("restriType", group.getString("type")).put("restriValue", group.getString("value"))
+            .put("loansDisplay", new JSONObject().put("showLent", true).put("showBorrowed", false))
+            .put("valueDate", start.toString()).put("limit", 50).put("sortid", "").put("direction", "ASC");
+        JSONArray members = new JSONArray();
+        int offset = 0;
+        while (true) {
+            JSONObject page = call("/v3/activities/events?roleId=" + encode(role), request.put("offset", offset));
+            JSONArray people = page.getJSONArray("persons");
+            for (int i = 0; i < people.length(); i++) {
+                JSONObject person = people.getJSONObject(i);
+                if (person.optBoolean("hidden")) throw new Exception("Collaboratori riservati");
+                members.put(new JSONObject().put("uuid", person.getString("resource")).put("name", person.getString("name")));
+            }
+            if (offset + people.length() >= page.getInt("totalEmp")) break;
+            if (people.length() == 0 || offset > 5000) throw new Exception("Collaboratori incompleti");
+            offset += people.length();
+        }
+        return EffiplanData.members(members);
+    }
     JSONArray planning(LocalDate start, LocalDate end) throws Exception {
         JSONObject request = eventsRequest("UFH", start, end, new JSONArray().put("pst")).put("rollNumber", new JSONArray().put(user));
         JSONObject content = call("/v3/activities/events?roleId=" + encode(role), request);
@@ -69,7 +127,8 @@ final class EffiplanApi {
         return EffiplanData.populations(sections, favorites, context.getJSONArray("content"));
     }
     JSONObject team(LocalDate start, LocalDate end, boolean includeAbsences, String populationKey) throws Exception {
-        JSONObject group = EffiplanData.population(populations(), populationKey);
+        JSONObject group = verifiedMembership != null && verifiedMembership.key.equals(populationKey)
+            ? ownGroup(verifiedMembership) : EffiplanData.population(populations(), populationKey);
         JSONObject display = postDisplay("UPC");
         JSONObject request = eventsRequest("UPC", start, end, new JSONArray().put("pst").put("abs"))
             .put("valueDate", start.toString()).put("sortid", "").put("direction", "ASC")
@@ -122,7 +181,9 @@ final class EffiplanApi {
     private JSONObject exchange(String path, String body, boolean attendanceWrite) throws Exception {
         if (attendanceWrite) {
             if (!path.equals("/v1/self/clocks?roleId=" + encode(role)) || body == null) throw new Exception("Operazione non consentita");
-        } else if (!path.startsWith("/v2/users/settings/menu?") && !path.matches("/v1/settings/functions/(UFH|UPC|USD)/models(/\\d+)?\\?.*") && !path.startsWith("/v3/activities/events?") && !path.startsWith("/v1/users/settings/context?") && !path.startsWith("/v2/settings/lists/types/SEH?") && !path.startsWith("/v1/settings/lists/types?")) {
+        } else if (!path.startsWith("/v2/users/settings/menu?") && !path.matches("/v1/settings/functions/(UFH|UPC|USD)/models(/\\d+)?\\?.*") && !path.startsWith("/v3/activities/events?") && !path.startsWith("/v1/users/settings/context?") && !path.startsWith("/v2/settings/lists/types/SEH?") && !path.startsWith("/v1/settings/lists/types?")
+            && !path.equals("/v1/synoptic/" + encode(user) + "/personal?roleId=" + encode(role))
+            && !path.equals("/v2/employees/" + encode(user) + "?categories=identity&roleId=" + encode(role))) {
             throw new Exception("Operazione non consentita");
         }
         String endpoint = origin + "/webquartz/hq-web/api" + path;
@@ -142,7 +203,8 @@ final class EffiplanApi {
                 try (java.io.OutputStream out = connection.getOutputStream()) { out.write(bytes); }
             }
             int status = connection.getResponseCode();
-            if (status == 401 || status == 403 || (status >= 300 && status < 400)) throw new AuthenticationException();
+            if (status == 401 || (status >= 300 && status < 400)) throw new AuthenticationException();
+            if (status == 403) throw new Exception("Il portale non autorizza questa lettura.");
             if (status < 200 || status >= 300) throw new Exception("Lettura Effiplan non riuscita");
             if (connection.getContentType() == null || !connection.getContentType().contains("application/json")) throw new Exception("Formato Effiplan non supportato");
             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();

@@ -13,5 +13,8 @@ enum PlanningPortal {
         return EPLANNING;
     }
     String calendarPreferences() { return this == EPLANNING ? "calendar-settings" : "calendar-settings-effiplan"; }
+    String calendarPreferences(String accountScope) {
+        return calendarPreferences() + (accountScope.isEmpty() ? "" : "-" + accountScope);
+    }
     String skillsPrefix() { return this == EPLANNING ? "" : "effiplan:"; }
 }

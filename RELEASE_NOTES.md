@@ -1,5 +1,22 @@
 # Novità
 
+- Impostazioni · rimossa la barra di navigazione dei periodi su entrambi i portali.
+- Account · configurazione separata per utente e portale, anche sullo stesso dispositivo.
+- Cambio portale · nessuna nuova configurazione se l’account del portale selezionato è già configurato.
+- Aggiornamento · configurazione richiesta al primo accesso anche agli utenti delle versioni precedenti, mantenendo le preferenze compatibili.
+- Squadra manuale · verifica dell’utente tra i membri; scelta annullata con errore se assente.
+- Novità versione · popup solo dopo accesso e configurazione completati.
+- Effiplan · riconoscimento squadra anche senza permesso di accesso al dossier collaboratore.
+- Configurazione · selezione manuale della squadra e pagina semplificata, con colleghi solo nel popup dei ruoli.
+- Primo accesso · configurazione guidata per ogni account e portale.
+- Squadra · appartenenza e colleghi rilevati dal profilo, ruoli configurabili subito.
+- Configurazione · portale modificabile e pulsante fisso “Salva e continua →”.
+- Google Calendar · icona sempre disponibile in Settimana e configurazione tramite popup.
+- E-Planning · selettore Squadra e categorie dei tipi di turno.
+- Accesso · rilevamento trasferimenti e nuova conferma dei ruoli, senza riutilizzare quelli della vecchia squadra.
+
+## Correzioni pubblicazione precedenti
+
 - Effiplan · corretta la configurazione della Release per abilitarne la selezione.
 - Pubblicazione · bloccate le build con configurazione di un portale mancante.
 

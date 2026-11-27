@@ -29,6 +29,8 @@ final class AppUpdater {
     private volatile boolean destroyed;
     private volatile HttpURLConnection active;
     private boolean checking;
+    private boolean accountReady, resumed;
+    private AlertDialog installedNotesDialog;
     private Runnable availabilityChanged;
     private Info latest;
     private final Runnable poll = new Runnable() {
@@ -61,11 +63,17 @@ final class AppUpdater {
     void open() { if (latest != null && latest.code > BuildConfig.VERSION_CODE) showAvailable(latest); else check(true); }
     boolean hasUpdate() { return latest != null && UpdateRules.hasUpdate(BuildConfig.VERSION_CODE, latest.code); }
     void setOnAvailabilityChanged(Runnable listener) { availabilityChanged = listener; updateButton(); }
-    void start() { main.post(() -> { if (!destroyed) showInstalledNotes(); }); main.post(poll); }
-    void resume() { main.removeCallbacks(poll); main.post(poll); }
-    void pause() { main.removeCallbacks(poll); }
+    void start() { main.post(poll); }
+    void setAccountReady(boolean ready) {
+        accountReady = ready;
+        if (!ready && installedNotesDialog != null) installedNotesDialog.dismiss();
+        if (ready) showInstalledNotes();
+    }
+    void resume() { resumed = true; main.removeCallbacks(poll); main.post(poll); showInstalledNotes(); }
+    void pause() { resumed = false; main.removeCallbacks(poll); }
     void destroy() {
         destroyed = true; main.removeCallbacksAndMessages(null); executor.shutdownNow();
+        if (installedNotesDialog != null) installedNotesDialog.dismiss();
         if (active != null) active.disconnect();
     }
     private void updateButton() {
@@ -137,9 +145,13 @@ final class AppUpdater {
     }
     private void showInstalledNotes() {
         int previous = prefs.getInt("seen_version", 0);
-        if (previous >= BuildConfig.VERSION_CODE) return;
+        if (destroyed || activity.isFinishing() || !UpdateRules.showInstalledNotes(accountReady, resumed,
+            installedNotesDialog != null, previous, BuildConfig.VERSION_CODE)) return;
         String notes = UpdateRules.summarizeNotes(installedNotes(), 3);
-        new AppDialogs.Builder(activity).setTitle("Novità · E-Planning " + BuildConfig.VERSION_NAME).setMessage(notes).setPositiveButton("Continua", (d, w) -> prefs.edit().putInt("seen_version", BuildConfig.VERSION_CODE).apply()).setCancelable(false).show();
+        installedNotesDialog = new AppDialogs.Builder(activity).setTitle("Novità · E-Planning " + BuildConfig.VERSION_NAME).setMessage(notes)
+            .setPositiveButton("Continua", (d, w) -> prefs.edit().putInt("seen_version", BuildConfig.VERSION_CODE).apply()).setCancelable(false).create();
+        installedNotesDialog.setOnDismissListener(d -> installedNotesDialog = null);
+        installedNotesDialog.show();
     }
     private void error(String message) { if (!destroyed) new AppDialogs.Builder(activity).setTitle("Aggiornamenti").setMessage(message).setPositiveButton("OK", null).show(); }
 }

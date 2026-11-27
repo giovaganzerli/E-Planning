@@ -12,7 +12,7 @@
         </FrameLayout>
     </LinearLayout>
     <LinearLayout android:id="@+id/planningContainer" android:orientation="vertical" android:background="#F6F7FB" android:paddingLeft="16dp" android:paddingRight="16dp" android:paddingTop="14dp" android:paddingBottom="8dp" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
-        <LinearLayout android:orientation="vertical" android:background="@drawable/bg_summary" android:padding="14dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <LinearLayout android:id="@+id/periodSummary" android:orientation="vertical" android:background="@drawable/bg_summary" android:padding="14dp" android:layout_width="match_parent" android:layout_height="wrap_content">
             <LinearLayout android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
                 <Button android:id="@+id/previousPeriod" android:text="‹" android:textSize="24sp" android:textColor="#FFFFFF" android:background="@drawable/bg_period" android:layout_marginEnd="6dp" android:layout_width="36dp" android:layout_height="40dp" />
                 <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content">
@@ -24,8 +24,8 @@
                 <Button android:id="@+id/today" android:text="OGGI" android:textSize="11sp" android:textStyle="bold" android:textColor="#FFFFFF" android:background="@drawable/bg_period" android:layout_marginStart="6dp" android:layout_width="52dp" android:layout_height="40dp" />
                 <ImageButton android:id="@+id/calendarSync" android:src="@drawable/ic_calendar_sync" android:contentDescription="Sincronizza settimana su Google Calendar" android:background="@drawable/bg_period" android:padding="8dp" android:visibility="gone" android:layout_marginStart="6dp" android:layout_width="40dp" android:layout_height="40dp" />
             </LinearLayout>
-            <TextView android:id="@+id/status" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" />
         </LinearLayout>
+        <TextView android:id="@+id/status" android:visibility="gone" android:background="@drawable/bg_summary" android:padding="14dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
         <LinearLayout android:id="@+id/punchPreview" android:orientation="horizontal" android:gravity="center_vertical" android:background="@drawable/bg_punch_card" android:padding="12dp" android:layout_marginTop="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content">
             <ImageView android:src="@drawable/ic_time_clock" android:background="@drawable/bg_filter" android:padding="10dp" android:importantForAccessibility="no" android:layout_width="44dp" android:layout_height="44dp" />
             <LinearLayout android:orientation="vertical" android:layout_marginStart="12dp" android:layout_marginEnd="10dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content">
@@ -44,6 +44,15 @@
         <Button android:id="@+id/openMonth" android:text="Mese" android:textSize="11sp" android:textAllCaps="false" android:textColor="#64748B" android:drawableTop="@drawable/ic_nav_month" android:drawablePadding="2dp" android:gravity="center" android:background="@drawable/bg_nav" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" />
         <Button android:id="@+id/openTeam" android:text="Squadra" android:textSize="11sp" android:textAllCaps="false" android:textColor="#64748B" android:drawableTop="@drawable/ic_nav_team" android:drawablePadding="2dp" android:gravity="center" android:background="@drawable/bg_nav" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" />
         <Button android:id="@+id/openSearch" android:text="Cerca cambio" android:textSize="11sp" android:textAllCaps="false" android:textColor="#64748B" android:drawableTop="@drawable/ic_nav_search" android:drawablePadding="2dp" android:gravity="center" android:background="@drawable/bg_nav" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/portalSetupPage" android:orientation="vertical" android:background="#F6F7FB" android:visibility="gone" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <ScrollView android:fillViewport="true" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+            <LinearLayout android:id="@+id/portalSetupContent" android:orientation="vertical" android:padding="24dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        </ScrollView>
+        <LinearLayout android:orientation="vertical" android:background="#FFFFFF" android:padding="16dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:text="Potrai sempre modificare queste preferenze nelle Impostazioni dell’app." android:textSize="12sp" android:textColor="#64748B" android:layout_marginBottom="10dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <Button android:id="@+id/finishPortalSetup" android:text="Salva e continua →" android:textAllCaps="false" android:textSize="16sp" android:textStyle="bold" android:textColor="#FFFFFF" android:background="@drawable/bg_setup_continue" android:layout_width="match_parent" android:layout_height="54dp" />
+        </LinearLayout>
     </LinearLayout>
     <ScrollView android:id="@+id/portalChoicePage" android:fillViewport="true" android:background="#F6F7FB" android:visibility="gone" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
         <LinearLayout android:orientation="vertical" android:gravity="center_vertical" android:padding="24dp" android:layout_width="match_parent" android:layout_height="wrap_content">

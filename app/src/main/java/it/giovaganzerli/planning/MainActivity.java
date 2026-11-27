@@ -33,6 +33,10 @@ import android.widget.PopupWindow;
 import android.widget.ScrollView;
 import android.widget.CheckBox;
 import android.widget.TextView;
+import android.widget.Spinner;
+import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
+import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.json.JSONTokener;
@@ -68,6 +72,7 @@ public class MainActivity extends Activity {
     private static final String MONTHLY_API = API + "planning/monthlyPlanningByCollaborator";
     private static final String TEAM_API = API + "planning/collaboratorWeekTeam";
     private static final String TEAM_MEMBERS_API = API + "PlanningManager/getCollaboratorsByTeamWithPlanning";
+    private static final String TEAMS_API = BuildConfig.API_BASE_URL + "/lite/api/v2/teams";
     private static final String PROFILE_API = BuildConfig.API_BASE_URL + "/api/v2/actor/profile";
     private static final int NAVY = Color.rgb(36, 59, 116), INK = Color.rgb(25, 42, 74), MUTED = Color.rgb(100, 116, 139);
     private static final int CALENDAR_PERMISSION_REQUEST = 41;
@@ -77,7 +82,16 @@ public class MainActivity extends Activity {
     private static final String EVENT_MARKER = "E-PLANNING:";
     private PlanningPortal planningPortal = PlanningPortal.EPLANNING;
     private EffiplanApi effiplan;
-    private String effiplanPopulation = "DEFAULT", effiplanPopulationTitle = "Squadra predefinita";
+    private String effiplanPopulation = "OWN", effiplanPopulationTitle = "La mia squadra";
+    private String accountScope = "", profileTeamUuid = "", profileTeamTitle = "", profilePersonnelDivision = "";
+    private PortalSetupController setupController;
+    private boolean configuringAccount;
+    private boolean resolvingMembership;
+    private int membershipGeneration;
+    private SetupRules.Membership currentMembership;
+    private java.util.function.Consumer<CalendarChoice> pendingCalendarSelection;
+    private String pendingCalendarScope = "";
+    private AlertDialog activeCalendarDialog;
     private final ArrayList<SwapSearch.Segment> effiplanAbsences = new ArrayList<>();
     private boolean updaterStarted;
     private boolean selectingPortal, switchingPortal;
@@ -182,11 +196,13 @@ public class MainActivity extends Activity {
         if (!updaterStarted) { updaterStarted = true; updater.start(); }
     }
     private void choosePlanningPortal(boolean switching) {
+        if (updater != null) updater.setAccountReady(false);
         selectingPortal = true; switchingPortal = switching; authGeneration++;
         authHandler.removeCallbacks(sessionPoll); workday.visible(false);
         header.setVisibility(View.GONE); planningContainer.setVisibility(View.GONE); bottomNavigation.setVisibility(View.GONE);
         findViewById(R.id.loginPortalBar).setVisibility(View.GONE); portal.setVisibility(View.GONE);
         findViewById(R.id.portalChoicePage).setVisibility(View.VISIBLE);
+        findViewById(R.id.portalSetupPage).setVisibility(View.GONE);
         ((TextView) findViewById(R.id.portalChoiceTitle)).setText(switching ? "Cambia portale" : "Il tuo portale di planning");
         ((TextView) findViewById(R.id.portalChoiceHelp)).setText(switching ? "Scegli il portale del tuo negozio. Cambiandolo, la sessione viene chiusa e l’app si riavvia per un nuovo accesso." : "Scegli il portale utilizzato dal tuo negozio. Potrai cambiarlo in seguito dalle Impostazioni.");
         android.widget.RadioGroup choices = findViewById(R.id.portalChoices);
@@ -202,7 +218,7 @@ public class MainActivity extends Activity {
         PlanningPortal choice = selected == R.id.chooseEffiplan ? PlanningPortal.EFFIPLAN : PlanningPortal.EPLANNING;
         if (choice == PlanningPortal.EFFIPLAN && BuildConfig.EFFIPLAN_ORIGIN.isEmpty()) return;
         if (switchingPortal && choice == planningPortal) { returnFromPortalChoice(); return; }
-        getSharedPreferences("planning-portal", MODE_PRIVATE).edit().putString("selected", choice.name()).apply();
+        getSharedPreferences("planning-portal", MODE_PRIVATE).edit().putString("selected", choice.name()).remove("configure-next-login").apply();
         selectingPortal = false; findViewById(R.id.portalChoicePage).setVisibility(View.GONE);
         if (switchingPortal) clearSession(this::recreate);
         else { planningPortal = choice; startPlanningPortal(); }
@@ -210,7 +226,8 @@ public class MainActivity extends Activity {
     private void returnFromPortalChoice() {
         if (!selectingPortal || !switchingPortal) return;
         selectingPortal = false; findViewById(R.id.portalChoicePage).setVisibility(View.GONE);
-        if (authenticated) { showApp(); selectTab(currentTab); } else showLogin();
+        if (configuringAccount) showSetupPage();
+        else if (authenticated) { showApp(); selectTab(currentTab); } else showLogin();
     }
 
     private void checkForSession() {
@@ -232,11 +249,18 @@ public class MainActivity extends Activity {
                 if (!found.matches("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")) return;
                 token = found;
             }
-            authenticated = true; showApp(); selectTab(Tab.WEEK);
+            authenticated = true;
+            weekReady = false; workday.visible(false); weekList.removeAllViews();
+            calendarSyncButton.setVisibility(View.GONE); calendarSyncButton.setEnabled(false); calendarSyncIndicator.setVisibility(View.GONE);
+            punchPreview.setVisibility(View.GONE); status.setVisibility(View.GONE);
+            findViewById(R.id.loginPortalBar).setVisibility(View.GONE); portal.setVisibility(View.GONE);
+            header.setVisibility(View.VISIBLE); planningContainer.setVisibility(View.VISIBLE); bottomNavigation.setVisibility(View.GONE);
+            loadProfile();
         });
     }
 
     private void showLogin() {
+        if (updater != null) updater.setAccountReady(false);
         selectingPortal = false; findViewById(R.id.portalChoicePage).setVisibility(View.GONE);
         findViewById(R.id.loginPortalBar).setVisibility(View.VISIBLE);
         ((TextView) findViewById(R.id.loginPortalName)).setText("Accesso · " + planningPortal.label);
@@ -246,11 +270,14 @@ public class MainActivity extends Activity {
     }
 
     private void showApp() {
+        if (configuringAccount) { showSetupPage(); return; }
+        if (authenticated && !accountScope.isEmpty() && currentMembership == null) { profileReady(); return; }
         selectingPortal = false; findViewById(R.id.portalChoicePage).setVisibility(View.GONE);
         findViewById(R.id.loginPortalBar).setVisibility(View.GONE);
         authHandler.removeCallbacks(sessionPoll);
         header.setVisibility(View.VISIBLE); planningContainer.setVisibility(View.VISIBLE); bottomNavigation.setVisibility(View.VISIBLE); portal.setVisibility(View.GONE);
         subtitle.setText("Il tuo planning, a colpo d’occhio");
+        if (updater != null) updater.setAccountReady(authenticated && !accountScope.isEmpty() && currentMembership != null && !resolvingMembership);
     }
     private void showAppMenu() {
         LinearLayout menu = new LinearLayout(this); menu.setOrientation(LinearLayout.VERTICAL); menu.setPadding(dp(6), dp(6), dp(6), dp(6)); menu.setBackgroundResource(R.drawable.bg_popup_menu);
@@ -291,11 +318,19 @@ public class MainActivity extends Activity {
     private void clearSession() { clearSession(null); }
     private void clearSession(Runnable after) {
         if (destroyed || clearingSession) return;
+        if (updater != null) updater.setAccountReady(false);
         clearingSession = true; final int generation = ++authGeneration; authHandler.removeCallbacksAndMessages(null);
+        if (setupController != null) setupController.destroy();
+        setupController = null; configuringAccount = false; resolvingMembership = false; currentMembership = null; accountScope = "";
+        profileTeamUuid = ""; profileTeamTitle = ""; profilePersonnelDivision = "";
+        pendingCalendarSelection = null; pendingCalendarScope = "";
+        if (activeCalendarDialog != null) activeCalendarDialog.dismiss();
+        findViewById(R.id.portalSetupPage).setVisibility(View.GONE);
         requestGeneration++; authenticated = false; token = ""; collaboratorUuid = ""; teamUuid = ""; collaboratorName = ""; shifts.clear(); collaborators.clear(); weekList.removeAllViews(); searchDay = LocalDate.now(); searchSelectedShifts.clear();
+        weekReady = false; calendarSyncButton.setEnabled(false); calendarSyncButton.setVisibility(View.GONE); calendarSyncIndicator.setVisibility(View.GONE);
         workday.session("", "");
         effiplan = null; effiplanAbsences.clear();
-        effiplanPopulation = "DEFAULT"; effiplanPopulationTitle = "Squadra predefinita";
+        effiplanPopulation = "OWN"; effiplanPopulationTitle = "La mia squadra";
         currentMonth = LocalDate.now().withDayOfMonth(1); currentWeek = weekStart(LocalDate.now()); currentTeamWeek = currentWeek; currentTeamDay = LocalDate.now();
         showLogin(); portal.stopLoading(); portal.clearHistory(); portal.clearFormData(); portal.clearCache(true);
         // Navigation can cancel evaluateJavascript callbacks: always allow cleanup to finish.
@@ -318,7 +353,7 @@ public class MainActivity extends Activity {
         authHandler.postDelayed(finish, 1500);
     }
 
-    private void selectTab(Tab tab) { currentTab = tab; updateNavigation(); loadCurrentTab(); }
+    private void selectTab(Tab tab) { if (configuringAccount) { showSetupPage(); return; } if (resolvingMembership) return; currentTab = tab; updateNavigation(); loadCurrentTab(); }
     private void movePeriod(int direction) {
         if (currentTab == Tab.SEARCH) { searchDay = searchDay.plusWeeks(direction); searchSelectedShifts.clear(); loadCurrentTab(); return; }
         if (currentTab == Tab.MONTH) currentMonth = currentMonth.plusMonths(direction);
@@ -328,6 +363,7 @@ public class MainActivity extends Activity {
     }
     private void goToday() { LocalDate start = weekStart(LocalDate.now()); if (currentTab == Tab.SEARCH) { searchDay = LocalDate.now(); searchSelectedShifts.clear(); } else if (currentTab == Tab.MONTH) currentMonth = LocalDate.now().withDayOfMonth(1); else if (currentTab == Tab.TEAM) { currentTeamWeek = start; currentTeamDay = LocalDate.now(); } else currentWeek = start; loadCurrentTab(); }
     private void updateNavigation() {
+        findViewById(R.id.periodSummary).setVisibility(currentTab == Tab.SETTINGS ? View.GONE : View.VISIBLE);
         punchPreview.setVisibility(currentTab == Tab.WEEK ? View.VISIBLE : View.GONE);
         workday.visible(currentTab == Tab.WEEK);
         updatePopulationSelector();
@@ -341,11 +377,15 @@ public class MainActivity extends Activity {
     }
 
     private void loadCurrentTab() {
+        if (configuringAccount) { showSetupPage(); return; }
+        if (resolvingMembership) return;
         if (!authenticated || token.isEmpty()) { showLogin(); return; }
         if (currentTab == Tab.WEEK) workday.refresh();
         weekReady = false; planningReadable = true; calendarSyncIndicator.setVisibility(View.GONE);
         calendarSyncButton.setVisibility(currentTab == Tab.WEEK ? View.VISIBLE : View.GONE); calendarSyncButton.setEnabled(false);
         requestGeneration++; refreshButton.setEnabled(false); shifts.clear(); collaborators.clear(); weekList.removeAllViews(); status.setVisibility(View.GONE);
+        weekLabel.setText(currentTab == Tab.TEAM ? "Squadra · " + shortRange(currentTeamWeek) : currentTab == Tab.SEARCH ? "Cerca cambio" : currentTab == Tab.SETTINGS ? "Impostazioni" : "Caricamento planning…");
+        weekSummary.setText("");
         if (collaboratorUuid.isEmpty()) { loadProfile(); return; }
         switch (currentTab) {
             case MONTH: loadMonth(); break;
@@ -362,7 +402,7 @@ public class MainActivity extends Activity {
                 try {
                     JSONObject profile = new JSONObject(raw);
                     collaboratorUuid = profile.getString("id"); collaboratorName = profile.getString("name"); teamUuid = "";
-                    workday.effiplanSession(effiplan); loadCurrentTab();
+                    workday.effiplanSession(effiplan); profileReady();
                 } catch (Exception e) { showLoadError("Impossibile leggere il profilo Effiplan."); }
             });
             return;
@@ -372,15 +412,264 @@ public class MainActivity extends Activity {
                 JSONObject profile = new JSONObject(raw); JSONObject person = profile.getJSONObject("collaborator");
                 String uuid = person.getString("uuid");
                 if (!validUuid(uuid)) throw new Exception("Identificativo collaboratore mancante");
-                JSONObject condition = person.optJSONObject("latestSuccessfulLaborCondition");
-                if (condition == null) condition = person.optJSONObject("activeLaborCondition");
+                JSONObject condition = SetupData.activeCondition(person);
                 JSONObject team = condition == null ? null : condition.optJSONObject("team");
                 String resolvedTeam = team == null ? "" : team.optString("uuid", "");
                 collaboratorUuid = uuid; teamUuid = validUuid(resolvedTeam) ? resolvedTeam : "";
+                profileTeamUuid = teamUuid; profileTeamTitle = team == null ? "" : team.optString("name", team.optString("description", "Squadra del profilo"));
+                JSONObject site = condition == null ? null : condition.optJSONObject("site");
+                profilePersonnelDivision = site == null ? "" : site.optString("personnelDivision", "");
                 workday.session(token, collaboratorUuid);
                 collaboratorName = (person.optString("name", "") + " " + person.optString("firstLastName", "")).trim();
-                loadCurrentTab();
+                profileReady();
             } catch (Exception e) { showLoadError("Impossibile identificare il collaboratore dal profilo ePlanning. Premi aggiorna per riprovare."); }
+        });
+    }
+    private void profileReady() {
+        accountScope = effiplan == null ? EffiplanRules.scopeKey(BuildConfig.API_BASE_URL, collaboratorUuid) : effiplan.scopeKey();
+        resolvingMembership = true; weekLabel.setText("Verifica squadra di appartenenza…"); weekSummary.setText("");
+        loadOwnMembership(accountScope, actual -> {
+            resolvingMembership = false; currentMembership = actual;
+            SetupRules.Draft saved = setupDraft();
+            boolean transferred = SetupRules.transferred(saved.teamKey, actual.team.key);
+            saved.membership(actual);
+            if (SetupRules.requiresSetup(calendarSettings().getInt("setup-version", 0), saved, transferred)) { openAccountSetup(false); return; }
+            calendarSettings().edit().putString("own-team-title", actual.team.title)
+                .putBoolean("own-team-manual", actual.manual).putString("detected-team-key", actual.detectedTeamKey).apply();
+            applyOwnTeam(saved); showApp(); selectTab(Tab.WEEK);
+        }, error -> {
+            resolvingMembership = false; currentMembership = null; openAccountSetup(false);
+            if (setupController != null) setupController.error(error);
+        });
+    }
+    private String ownTeamKey() { return calendarSettings().getString("own-team-key", profileTeamUuid); }
+    private String ownTeamTitle() { return calendarSettings().getString("own-team-title", profileTeamTitle); }
+    private void applyOwnTeam(SetupRules.Draft draft) {
+        if (planningPortal == PlanningPortal.EPLANNING) teamUuid = draft.teamKey;
+        effiplanPopulation = "OWN"; effiplanPopulationTitle = "La mia squadra · " + draft.teamTitle;
+    }
+    private SetupRules.Draft setupDraft() {
+        android.content.SharedPreferences prefs = calendarSettings();
+        SetupRules.Draft draft = new SetupRules.Draft();
+        draft.teamKey = ownTeamKey(); draft.teamTitle = ownTeamTitle();
+        draft.manualTeam = prefs.getBoolean("own-team-manual", false);
+        draft.detectedTeamKey = prefs.getString("detected-team-key", "");
+        JSONObject savedRoles = storedSkillsFor(draft.teamKey);
+        java.util.Iterator<String> people = savedRoles.keys();
+        while (people.hasNext()) { String id = people.next(); draft.roles.put(id, SetupRules.normalizeRoles(savedRoles.optInt(id, 0))); }
+        draft.calendarId = prefs.getLong(SELECTED_CALENDAR_ID, -1); draft.calendarName = prefs.getString(SELECTED_CALENDAR_NAME, "");
+        draft.calendarEnabled = prefs.getBoolean("calendar-sync-enabled", draft.calendarId >= 0);
+        for (int i = 0; i < 2; i++) {
+            draft.reminderEnabled[i] = prefs.getBoolean("reminder-enabled-" + i, true);
+            draft.reminderMinutes[i] = prefs.getInt("reminder-minutes-" + i, i == 0 ? 1440 : 60);
+        }
+        return draft;
+    }
+    private void showSetupPage() {
+        if (updater != null) updater.setAccountReady(false);
+        header.setVisibility(View.GONE); planningContainer.setVisibility(View.GONE); bottomNavigation.setVisibility(View.GONE);
+        portal.setVisibility(View.GONE); findViewById(R.id.loginPortalBar).setVisibility(View.GONE);
+        findViewById(R.id.portalChoicePage).setVisibility(View.GONE);
+        findViewById(R.id.portalSetupPage).setVisibility(View.VISIBLE);
+        workday.visible(false);
+    }
+    private void openAccountSetup(boolean editing) {
+        if (!authenticated || accountScope.isEmpty()) return;
+        if (setupController != null) setupController.destroy();
+        // Opening an editor or switching portals must not invalidate a saved configuration.
+        requestGeneration++; configuringAccount = true; showSetupPage();
+        final String scope = accountScope;
+        setupController = new PortalSetupController(this, planningPortal.label, setupDraft(), editing, currentMembership, new PortalSetupController.Host() {
+            public void loadMembership(java.util.function.Consumer<SetupRules.Membership> success, java.util.function.Consumer<String> failure) {
+                loadOwnMembership(scope, actual -> { currentMembership = actual; success.accept(actual); }, failure);
+            }
+            public void selectTeamManually(Runnable checking, java.util.function.Consumer<SetupRules.Membership> success, java.util.function.Consumer<String> failure) {
+                chooseSetupTeam(scope, () -> { currentMembership = null; checking.run(); },
+                    actual -> { currentMembership = actual; success.accept(actual); },
+                    message -> { currentMembership = null; failure.accept(message); });
+            }
+            public void configureRoles(SetupRules.Draft draft, Runnable changed) {
+                TeamRolesDialog.show(MainActivity.this, draft.members, collaboratorUuid, draft.roles, roles -> {
+                    if (!configuringAccount || !scope.equals(accountScope)) return;
+                    draft.roles.clear(); draft.roles.putAll(roles); changed.run();
+                });
+            }
+            public void chooseCalendar(java.util.function.Consumer<CalendarChoice> selected) { chooseGoogleCalendar(selected); }
+            public boolean calendarPermissionGranted() { return hasCalendarPermission(); }
+            public void finish(SetupRules.Draft draft) {
+                if (!authenticated || !scope.equals(accountScope) || !configuringAccount || !SetupRules.valid(draft)
+                    || currentMembership == null || !currentMembership.team.key.equals(draft.teamKey)) return;
+                if (draft.calendarEnabled && !hasCalendarPermission()) { setupController.error("Consenti l’accesso al calendario o disattiva la sincronizzazione."); return; }
+                android.content.SharedPreferences.Editor editor = calendarSettings().edit()
+                    .putString("own-team-key", draft.teamKey).putString("own-team-title", draft.teamTitle)
+                    .putBoolean("own-team-manual", draft.manualTeam).putString("detected-team-key", draft.detectedTeamKey)
+                    .putBoolean("calendar-sync-enabled", draft.calendarEnabled)
+                    .putLong(SELECTED_CALENDAR_ID, draft.calendarId).putString(SELECTED_CALENDAR_NAME, draft.calendarName)
+                    .putString("own-team-roles", new JSONObject(draft.roles).toString())
+                    .remove("setup-pending").putInt("setup-version", SetupRules.VERSION);
+                for (int i = 0; i < 2; i++) editor.putBoolean("reminder-enabled-" + i, draft.reminderEnabled[i]).putInt("reminder-minutes-" + i, draft.reminderMinutes[i]);
+                if (!editor.commit()) { setupController.error("Impossibile salvare la configurazione. Riprova."); return; }
+                getSharedPreferences("planning-portal", MODE_PRIVATE).edit().remove("configure-next-login").commit();
+                applyOwnTeam(draft); closeAccountSetup(); showApp(); selectTab(editing ? Tab.SETTINGS : Tab.WEEK);
+            }
+            public void cancel() {
+                if (!editing || !scope.equals(accountScope)) return;
+                if (currentMembership != null && !currentMembership.team.key.equals(ownTeamKey())) {
+                    setupController.error("Il portale indica una nuova squadra. Conferma la configurazione aggiornata per continuare."); return;
+                }
+                calendarSettings().edit().remove("setup-pending").commit();
+                closeAccountSetup(); showApp(); selectTab(Tab.SETTINGS);
+            }
+            public void changePortal() { if (scope.equals(accountScope)) choosePlanningPortal(true); }
+        });
+    }
+    private void closeAccountSetup() {
+        if (setupController != null) setupController.destroy();
+        setupController = null; configuringAccount = false;
+        findViewById(R.id.portalSetupPage).setVisibility(View.GONE);
+        collaborators.clear(); shifts.clear(); effiplanAbsences.clear(); searchSelectedShifts.clear();
+    }
+    private Object readEplanning(String endpoint, String bearer) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
+        try {
+            connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(15000); connection.setReadTimeout(20000);
+            connection.setRequestProperty("Authorization", "Bearer " + bearer); connection.setRequestProperty("Accept", "application/json");
+            int code = connection.getResponseCode();
+            if (code == 401) throw new EffiplanApi.AuthenticationException();
+            if (code < 200 || code >= 300) throw new Exception("Lettura non autorizzata o non disponibile");
+            try (InputStream input = connection.getInputStream()) { return new JSONTokener(read(input)).nextValue(); }
+        } finally { connection.disconnect(); }
+    }
+    private void loadOwnMembership(String scope, java.util.function.Consumer<SetupRules.Membership> success, java.util.function.Consumer<String> failure) {
+        final EffiplanApi client = effiplan; final String bearer = token, user = collaboratorUuid, name = collaboratorName;
+        final int generation = authGeneration;
+        final int membershipRequest = ++membershipGeneration;
+        final SetupRules.Draft saved = setupDraft();
+        final PlanningPortal selectedPortal = planningPortal;
+        executor.execute(() -> {
+            try {
+                SetupRules.Team team; Map<String, String> members; String siteKey = ""; String detected = ""; boolean manual = false;
+                LocalDate start = selectedPortal.weekStart(LocalDate.now());
+                if (client != null) {
+                    try { team = client.membership(); detected = team.key; }
+                    catch (EffiplanApi.AuthenticationException expired) { throw expired; }
+                    catch (Exception unavailable) {
+                        if (!saved.manualTeam || !SetupRules.explicitTeam(saved.teamKey)) throw unavailable;
+                        team = new SetupRules.Team(saved.teamKey, saved.teamTitle); manual = true; detected = saved.detectedTeamKey;
+                    }
+                    if (saved.manualTeam && detected.equals(saved.detectedTeamKey)) {
+                        team = new SetupRules.Team(saved.teamKey, saved.teamTitle); manual = true;
+                    }
+                    members = client.membershipRoster(team, start);
+                } else {
+                    JSONObject profile = (JSONObject) readEplanning(PROFILE_API, bearer);
+                    team = SetupData.eplanningMembership(profile, user);
+                    detected = team.key;
+                    JSONObject condition = SetupData.activeCondition(profile.getJSONObject("collaborator"));
+                    JSONObject site = condition == null ? null : condition.optJSONObject("site");
+                    siteKey = site == null ? "" : site.optString("personnelDivision");
+                    if (saved.manualTeam && detected.equals(saved.detectedTeamKey)) {
+                        team = new SetupRules.Team(saved.teamKey, saved.teamTitle); manual = true;
+                    }
+                    Object roster = readEplanning(TEAM_MEMBERS_API + "?filter[teamUuid]=" + team.key + "&filter[startDateInterval]=" + start + "&filter[withPolyvalences]=true", bearer);
+                    members = SetupData.eplanningMembers(roster);
+                }
+                if (members.isEmpty()) throw new Exception("Elenco collaboratori non disponibile");
+                if (manual) SetupRules.requireMember(members, user);
+                if (!members.containsKey(user)) members.put(user, name.isEmpty() ? "Tu" : name);
+                SetupRules.Membership actual = new SetupRules.Membership(team, members, siteKey, manual, detected);
+                runOnUiThread(() -> {
+                    if (destroyed || !authenticated || generation != authGeneration || membershipRequest != membershipGeneration || !scope.equals(accountScope) || selectingPortal) return;
+                    if (client == null) { profileTeamUuid = actual.detectedTeamKey; profilePersonnelDivision = actual.siteKey; }
+                    success.accept(actual);
+                });
+            } catch (EffiplanApi.AuthenticationException expired) {
+                runOnUiThread(() -> { if (!destroyed && authenticated && generation == authGeneration && membershipRequest == membershipGeneration && scope.equals(accountScope)) clearSession(); });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (!destroyed && authenticated && generation == authGeneration && membershipRequest == membershipGeneration && scope.equals(accountScope) && !selectingPortal)
+                        failure.accept("Il portale non ha consentito di riconoscere una squadra univoca. Usa Seleziona squadra manualmente per scegliere tra le squadre autorizzate.");
+                });
+            }
+        });
+    }
+    private void chooseSetupTeam(String scope, Runnable checking, java.util.function.Consumer<SetupRules.Membership> success, java.util.function.Consumer<String> failure) {
+        final EffiplanApi client = effiplan;
+        final String bearer = token, division = profilePersonnelDivision, user = collaboratorUuid, name = collaboratorName;
+        final int auth = authGeneration, request = membershipGeneration;
+        final PlanningPortal selectedPortal = planningPortal;
+        final String detected = currentMembership == null ? calendarSettings().getString("detected-team-key", profileTeamUuid) : currentMembership.detectedTeamKey;
+        resolvingMembership = false;
+        executor.execute(() -> {
+            try {
+                List<SetupRules.Team> teams = client != null ? SetupData.effiplanTeams(client.populations())
+                    : division.isEmpty() ? new ArrayList<>() : SetupData.eplanningTeams(readEplanning(TEAMS_API + "?personnelDivision=" + java.net.URLEncoder.encode(division, "UTF-8"), bearer));
+                if (client == null && validUuid(profileTeamUuid) && teams.stream().noneMatch(t -> t.key.equals(profileTeamUuid)))
+                    teams.add(0, new SetupRules.Team(profileTeamUuid, profileTeamTitle));
+                runOnUiThread(() -> {
+                    if (destroyed || !authenticated || !configuringAccount || !scope.equals(accountScope) || auth != authGeneration || request != membershipGeneration) return;
+                    if (teams.isEmpty()) { failure.accept("Nessuna squadra disponibile per questo profilo."); return; }
+                    LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
+                    android.widget.EditText filter = new android.widget.EditText(this); filter.setSingleLine(true); filter.setHint("Cerca squadra"); panel.addView(filter);
+                    ScrollView scroll = new ScrollView(this); LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); scroll.addView(list);
+                    panel.addView(scroll, new LinearLayout.LayoutParams(-1, (int) (getResources().getDisplayMetrics().heightPixels * .45f)));
+                    AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Seleziona squadra manualmente").setView(panel).setNegativeButton("Annulla", null).create();
+                    for (SetupRules.Team team : teams) {
+                        Button row = compactButton(team.title); row.setAllCaps(false); row.setTag(team.title.toLowerCase(Locale.ITALIAN)); list.addView(row);
+                        row.setOnClickListener(v -> {
+                            dialog.dismiss();
+                            if (destroyed || !authenticated || !configuringAccount || !scope.equals(accountScope) || auth != authGeneration || request != membershipGeneration) return;
+                            final int selectedRequest = ++membershipGeneration;
+                            checking.run();
+                            executor.execute(() -> {
+                                try {
+                                    LocalDate start = selectedPortal.weekStart(LocalDate.now());
+                                    Map<String, String> members = client != null ? client.membershipRoster(team, start)
+                                        : SetupData.eplanningMembers(readEplanning(TEAM_MEMBERS_API + "?filter[teamUuid]=" + team.key + "&filter[startDateInterval]=" + start + "&filter[withPolyvalences]=true", bearer));
+                                    if (members.isEmpty()) throw new Exception("Collaboratori non disponibili");
+                                    SetupRules.requireMember(members, user);
+                                    SetupRules.Membership selected = new SetupRules.Membership(team, members, division, true, detected);
+                                    runOnUiThread(() -> {
+                                        if (!destroyed && authenticated && configuringAccount && scope.equals(accountScope) && auth == authGeneration && selectedRequest == membershipGeneration) success.accept(selected);
+                                    });
+                                } catch (IllegalArgumentException notMember) {
+                                    runOnUiThread(() -> { if (!destroyed && configuringAccount && scope.equals(accountScope) && auth == authGeneration && selectedRequest == membershipGeneration) failure.accept("Non risulti tra i membri della squadra selezionata. Seleziona la tua squadra."); });
+                                } catch (Exception error) {
+                                    runOnUiThread(() -> { if (!destroyed && configuringAccount && scope.equals(accountScope) && auth == authGeneration && selectedRequest == membershipGeneration) failure.accept("Impossibile leggere i colleghi della squadra selezionata."); });
+                                }
+                            });
+                        });
+                    }
+                    filter.addTextChangedListener(new android.text.TextWatcher() {
+                        public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+                        public void onTextChanged(CharSequence s, int start, int before, int count) {
+                            String query = s.toString().trim().toLowerCase(Locale.ITALIAN);
+                            for (int i = 0; i < list.getChildCount(); i++) { View row = list.getChildAt(i); row.setVisibility(row.getTag().toString().contains(query) ? View.VISIBLE : View.GONE); }
+                        }
+                        public void afterTextChanged(android.text.Editable s) { }
+                    });
+                    dialog.show();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> { if (!destroyed && configuringAccount && scope.equals(accountScope) && auth == authGeneration && request == membershipGeneration) failure.accept("Impossibile leggere le squadre autorizzate dal portale."); });
+            }
+        });
+    }
+    private void loadBrowseTeams(java.util.function.Consumer<List<SetupRules.Team>> success) {
+        final String scope = accountScope, division = profilePersonnelDivision, bearer = token;
+        final int generation = requestGeneration;
+        executor.execute(() -> {
+            try {
+                List<SetupRules.Team> teams = division.isEmpty() ? new ArrayList<>() : SetupData.eplanningTeams(readEplanning(TEAMS_API + "?personnelDivision=" + java.net.URLEncoder.encode(division, "UTF-8"), bearer));
+                runOnUiThread(() -> { if (!destroyed && authenticated && scope.equals(accountScope) && generation == requestGeneration && currentTab == Tab.TEAM) success.accept(teams); });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (!destroyed && authenticated && scope.equals(accountScope) && generation == requestGeneration && currentTab == Tab.TEAM) {
+                        success.accept(new ArrayList<>());
+                        Toast.makeText(this, "Elenco squadre non disponibile. Puoi tornare alla tua squadra.", Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
         });
     }
     private boolean validUuid(String uuid) { return uuid.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"); }
@@ -419,6 +708,7 @@ public class MainActivity extends Activity {
     }
 
     private void loadTeam() {
+        teamUuid = "OWN".equals(effiplanPopulation) ? ownTeamKey() : effiplanPopulation;
         if (planningPortal == PlanningPortal.EFFIPLAN) {
             loadEffiplanTeam(currentTeamWeek, currentTeamWeek.plusWeeks(teamWeekCount).minusDays(1), false, false); return;
         }
@@ -433,10 +723,15 @@ public class MainActivity extends Activity {
     private void loadTeamWeeks(int index) {
         if (index >= teamWeekCount) { shifts.sort(Comparator.comparing(s -> s.from)); renderTeam(currentTeamWeek); complete("Planning squadra aggiornato"); return; }
         LocalDate start = currentTeamWeek.plusWeeks(index);
-        request(TEAM_API + "?filter[startDateInterval]=" + start, raw -> { appendShifts(raw); loadTeamWeeks(index + 1); });
+        request(teamPlanningEndpoint(start), raw -> { appendShifts(raw); loadTeamWeeks(index + 1); });
+    }
+    private String teamPlanningEndpoint(LocalDate start) {
+        return teamUuid.equals(profileTeamUuid) ? TEAM_API + "?filter[startDateInterval]=" + start
+            : API + "planning/weekTeamByManager?filter[startDateInterval]=" + start + "&filter[teamUuid]=" + teamUuid;
     }
 
     private void loadSwapPlanning() {
+        teamUuid = ownTeamKey();
         if (planningPortal == PlanningPortal.EFFIPLAN) {
             LocalDate monday = weekStart(searchDay);
             loadEffiplanTeam(monday, monday.plusDays(6), true, false); return;
@@ -449,7 +744,7 @@ public class MainActivity extends Activity {
                 collaborators.clear(); collectCollaborators(new JSONTokener(raw).nextValue());
                 if (collaborators.isEmpty()) throw new Exception();
                 if (!collaborators.containsKey(collaboratorUuid)) collaborators.put(collaboratorUuid, collaboratorName.isEmpty() ? "Tu" : collaboratorName);
-                request(TEAM_API + "?filter[startDateInterval]=" + monday, planning -> {
+                request(teamPlanningEndpoint(monday), planning -> {
                     try {
                         shifts.clear(); collectShifts(new JSONTokener(planning).nextValue()); deduplicateShifts();
                         shifts.removeIf(s -> collaboratorUuid.equals(s.collaboratorId));
@@ -460,7 +755,9 @@ public class MainActivity extends Activity {
         });
     }
     private void loadSettings() {
+        teamUuid = ownTeamKey();
         weekLabel.setText("Impostazioni"); weekSummary.setText("Caricamento configurazione…");
+        renderSettings();
         if (planningPortal == PlanningPortal.EFFIPLAN) {
             LocalDate monday = weekStart(LocalDate.now());
             loadEffiplanTeam(monday, monday.plusDays(6), false, true); return;
@@ -471,13 +768,13 @@ public class MainActivity extends Activity {
         request(membersUrl, raw -> {
             parseCollaborators(raw);
             if (!collaboratorUuid.isEmpty() && !collaborators.containsKey(collaboratorUuid)) collaborators.put(collaboratorUuid, collaboratorName.isEmpty() ? "Tu" : collaboratorName);
-            renderSettings(); complete("Impostazioni aggiornate");
+            request(teamPlanningEndpoint(monday), planning -> { parseShifts(planning); renderSettings(); complete("Impostazioni aggiornate"); });
         });
     }
     private void loadEffiplanTeam(LocalDate start, LocalDate end, boolean search, boolean settings) {
         status.setText("Caricamento planning collettivo Effiplan…");
         effiplanAbsences.clear();
-        final String population = search || settings ? "DEFAULT" : effiplanPopulation;
+        final String population = search || settings || "OWN".equals(effiplanPopulation) ? ownTeamKey() : effiplanPopulation;
         requestEffiplan(api -> api.team(start, end, search, population).toString(), raw -> {
             try {
                 JSONObject data = new JSONObject(raw);
@@ -523,24 +820,31 @@ public class MainActivity extends Activity {
     }
     private void updatePopulationSelector() {
         Button selector = findViewById(R.id.populationSelector);
-        selector.setVisibility(planningPortal == PlanningPortal.EFFIPLAN && authenticated && currentTab == Tab.TEAM ? View.VISIBLE : View.GONE);
+        selector.setVisibility(authenticated && currentTab == Tab.TEAM ? View.VISIBLE : View.GONE);
         selector.setText("Popolazione · " + effiplanPopulationTitle + "  ▾");
         selector.setContentDescription("Cambia popolazione. Attuale: " + effiplanPopulationTitle);
     }
     private void chooseEffiplanPopulation() {
-        if (!authenticated || effiplan == null || currentTab != Tab.TEAM) return;
-        requestEffiplan(api -> api.populations().toString(), raw -> {
+        if (!authenticated || currentTab != Tab.TEAM) return;
+        java.util.function.Consumer<String> showChoices = raw -> {
             try {
                 JSONArray choices = new JSONArray(raw);
+                if (SetupRules.explicitTeam(ownTeamKey())) {
+                    JSONArray withOwn = new JSONArray().put(new JSONObject().put("key", "OWN").put("title", "La mia squadra · " + ownTeamTitle()));
+                    for (int i = 0; i < choices.length(); i++) withOwn.put(choices.get(i));
+                    choices = withOwn;
+                }
                 final int generation = requestGeneration;
                 LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
                 content.setPadding(dp(12), dp(8), dp(12), dp(8));
-                content.addView(text("Sezioni e preferiti provengono dal tuo profilo. Puoi scegliere anche il negozio elencato dal portale o tutta la popolazione autorizzata; quest’ultima dipende dai tuoi permessi.", 12, MUTED, false));
+                content.addView(text(effiplan == null
+                    ? "Squadre del negozio autorizzate dal portale. La consultazione non cambia l’appartenenza usata per i cambi turno."
+                    : "Sezioni e preferiti provengono dal tuo profilo. Puoi scegliere anche il negozio elencato dal portale o tutta la popolazione autorizzata; quest’ultima dipende dai tuoi permessi.", 12, MUTED, false));
                 android.widget.EditText filter = new android.widget.EditText(this); filter.setSingleLine(true); filter.setHint("Cerca squadra o negozio");
                 content.addView(filter, new LinearLayout.LayoutParams(-1, dp(52)));
                 ScrollView scroll = new ScrollView(this); LinearLayout list = new LinearLayout(this); list.setOrientation(LinearLayout.VERTICAL); scroll.addView(list);
                 content.addView(scroll, new LinearLayout.LayoutParams(-1, (int) (getResources().getDisplayMetrics().heightPixels * .45f)));
-                AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Popolazione · Effiplan").setView(content).setNegativeButton("Annulla", null).create();
+                AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Popolazione · " + planningPortal.label).setView(content).setNegativeButton("Annulla", null).create();
                 for (int i = 0; i < choices.length(); i++) {
                     JSONObject choice = choices.getJSONObject(i);
                     String key = choice.getString("key"), title = choice.getString("title");
@@ -566,10 +870,29 @@ public class MainActivity extends Activity {
                 });
                 dialog.show();
             } catch (Exception e) { showLoadError("Impossibile leggere le popolazioni disponibili sul portale."); }
+        };
+        if (effiplan != null) requestEffiplan(api -> api.populations().toString(), raw -> showChoices.accept(raw));
+        else loadBrowseTeams(teams -> {
+            JSONArray choices = new JSONArray();
+            try {
+                for (SetupRules.Team team : teams) if (!team.key.equals(ownTeamKey()))
+                    choices.put(new JSONObject().put("key", team.key).put("title", team.title));
+                showChoices.accept(choices.toString());
+            } catch (Exception error) { showLoadError("Elenco squadre non leggibile."); }
         });
     }
-    private String skillsKey() { return planningPortal.skillsPrefix() + (effiplan == null ? "" : effiplan.scopeKey() + ":") + "skills:" + collaboratorUuid + ":" + teamUuid; }
-    private JSONObject storedSkills() { try { return new JSONObject(getSharedPreferences("swap-settings", MODE_PRIVATE).getString(skillsKey(), "{}")); } catch (Exception e) { return new JSONObject(); } }
+    private String skillsKeyFor(String team) { return planningPortal.skillsPrefix() + accountScope + ":skills:" + collaboratorUuid + ":" + team; }
+    private JSONObject storedSkillsFor(String team) {
+        try {
+            if (team.equals(calendarSettings().getString("own-team-key", "")) && calendarSettings().contains("own-team-roles"))
+                return new JSONObject(calendarSettings().getString("own-team-roles", "{}"));
+            android.content.SharedPreferences legacy = getSharedPreferences("swap-settings", MODE_PRIVATE);
+            String key = skillsKeyFor(team);
+            if (!legacy.contains(key)) key = planningPortal.skillsPrefix() + (effiplan == null ? "" : effiplan.scopeKey() + ":") + "skills:" + collaboratorUuid + ":" + team;
+            return new JSONObject(legacy.getString(key, "{}"));
+        } catch (Exception invalid) { return new JSONObject(); }
+    }
+    private JSONObject storedSkills() { return storedSkillsFor(ownTeamKey()); }
     private Map<String, EnumSet<SwapSearch.Role>> configuredSkills() {
         JSONObject stored = storedSkills(); Map<String, EnumSet<SwapSearch.Role>> result = new HashMap<>();
         for (String uuid : collaborators.keySet()) {
@@ -581,49 +904,22 @@ public class MainActivity extends Activity {
         return result;
     }
     private boolean swapConfigured() { return configuredSkills().size() == collaborators.size() && collaborators.containsKey(collaboratorUuid); }
-    private final String[] roleNames = { "Vendita", "Workshop", "PFL", "Accoglienza", "Responsabile" };
+    private final String[] roleNames = TeamRolesDialog.LABELS;
     private String skillsSummary(String uuid) {
         EnumSet<SwapSearch.Role> roles = configuredSkills().get(uuid); if (roles == null) return "Da configurare";
         if (roles.isEmpty()) return "Nessuna abilitazione (escluso)";
         ArrayList<String> names = new ArrayList<>(); for (SwapSearch.Role role : roles) names.add(roleNames[role.ordinal()]); return android.text.TextUtils.join(", ", names);
     }
     private void configureSwapTeam() {
-        if (currentTab != Tab.SEARCH && currentTab != Tab.SETTINGS) return;
-        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setPadding(dp(12), dp(8), dp(12), dp(8));
-        TextView help = text("Scorri la tabella orizzontalmente. Vendita include Cassa, QCO, Cabine, Scarico e TTP. Responsabile esclude le altre abilitazioni e i cambi. Nessuna spunta = escluso dalla ricerca.", 12, MUTED, false); content.addView(help);
-        HorizontalScrollView horizontal = new HorizontalScrollView(this); LinearLayout table = new LinearLayout(this); table.setOrientation(LinearLayout.VERTICAL); horizontal.addView(table);
-        ScrollView vertical = new ScrollView(this); vertical.addView(horizontal); content.addView(vertical, new LinearLayout.LayoutParams(-1, (int) (getResources().getDisplayMetrics().heightPixels * .5f)));
-        LinearLayout headings = new LinearLayout(this); headings.setBackgroundColor(Color.rgb(232,240,255));
-        TextView personHeading = text("Collaboratore", 12, NAVY, true); personHeading.setPadding(dp(8), dp(8), dp(8), dp(8)); headings.addView(personHeading, new LinearLayout.LayoutParams(dp(150), dp(56)));
-        for (String role : roleNames) { TextView label = text(role, 11, NAVY, true); label.setGravity(Gravity.CENTER); headings.addView(label, new LinearLayout.LayoutParams(dp(94), dp(56))); }
-        table.addView(headings);
-        ArrayList<String> ids = new ArrayList<>(collaborators.keySet()); ids.sort((a, b) -> a.equals(collaboratorUuid) ? (b.equals(collaboratorUuid) ? 0 : -1) : b.equals(collaboratorUuid) ? 1 : collaborators.get(a).compareToIgnoreCase(collaborators.get(b)));
-        Map<String, CheckBox[]> cells = new HashMap<>(); JSONObject stored = storedSkills();
-        final String owner = collaboratorUuid, team = teamUuid;
-        for (String id : ids) {
-            LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL); row.setBackgroundColor(id.equals(collaboratorUuid) ? Color.rgb(239,246,255) : Color.WHITE);
-            TextView name = text(collaborators.get(id) + (id.equals(collaboratorUuid) ? " · TU" : ""), 12, INK, true); name.setPadding(dp(8), dp(4), dp(8), dp(4)); row.addView(name, new LinearLayout.LayoutParams(dp(150), dp(60)));
-            int mask = stored.optInt(id, 0); boolean manager = (mask & 16) != 0; CheckBox[] boxes = new CheckBox[roleNames.length];
-            for (int i = 0; i < boxes.length; i++) {
-                CheckBox box = new CheckBox(this); boxes[i] = box; box.setContentDescription(collaborators.get(id) + ": " + roleNames[i]); box.setChecked(i == 4 ? manager : !manager && (mask & (1 << i)) != 0); box.setEnabled(i == 4 || !manager);
-                android.widget.FrameLayout cell = new android.widget.FrameLayout(this); cell.addView(box, new android.widget.FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER)); row.addView(cell, new LinearLayout.LayoutParams(dp(94), dp(60)));
-            }
-            boxes[4].setOnCheckedChangeListener((button, checked) -> { for (int i = 0; i < 4; i++) { if (checked) boxes[i].setChecked(false); boxes[i].setEnabled(!checked); } });
-            cells.put(id, boxes); table.addView(row); View divider = new View(this); divider.setBackgroundColor(Color.rgb(226,232,240)); table.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
-        }
-        AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Configura la tua squadra").setView(content).setNegativeButton("Annulla", null).setPositiveButton("Salva squadra", (d, which) -> {
-            if (!authenticated || !owner.equals(collaboratorUuid) || !team.equals(teamUuid)) return;
-            try {
-                JSONObject updated = storedSkills(); for (String id : ids) { CheckBox[] boxes = cells.get(id); int mask = 0; for (int i = 0; i < boxes.length; i++) if (boxes[i].isChecked()) mask |= 1 << i; updated.put(id, boxes[4].isChecked() ? 16 : mask); }
-                getSharedPreferences("swap-settings", MODE_PRIVATE).edit().putString(skillsKey(), updated.toString()).apply();
-            } catch (Exception e) { showLoadError("Impossibile salvare la configurazione della squadra."); }
-        }).create();
-        dialog.setOnDismissListener(d -> {
-            if (destroyed || !authenticated || !owner.equals(collaboratorUuid) || !team.equals(teamUuid)) return;
-            if (currentTab == Tab.SEARCH) renderSwapForm();
-            else if (currentTab == Tab.SETTINGS) renderSettings();
+        if ((currentTab != Tab.SEARCH && currentTab != Tab.SETTINGS) || !teamUuid.equals(ownTeamKey())) return;
+        final String scope = accountScope, team = ownTeamKey();
+        Map<String, Integer> masks = new HashMap<>(); JSONObject stored = storedSkills();
+        for (String id : collaborators.keySet()) masks.put(id, SetupRules.normalizeRoles(stored.optInt(id, 0)));
+        TeamRolesDialog.show(this, new HashMap<>(collaborators), collaboratorUuid, masks, roles -> {
+            if (destroyed || !authenticated || !scope.equals(accountScope) || !team.equals(ownTeamKey())) return;
+            calendarSettings().edit().putString("own-team-roles", new JSONObject(roles).toString()).apply();
+            if (currentTab == Tab.SEARCH) renderSwapForm(); else if (currentTab == Tab.SETTINGS) renderSettings();
         });
-        dialog.show();
     }
     private Button searchAction(String label, LinearLayout parent, Runnable action) {
         Button button = compactButton(label); button.setAllCaps(false); button.setPadding(dp(10), dp(6), dp(10), dp(6));
@@ -632,8 +928,8 @@ public class MainActivity extends Activity {
     private String shiftChoiceKey(Shift s) { return s.collaboratorId + "|" + s.from + "|" + s.to + "|" + s.typeLabel(); }
     private ArrayList<Shift> chosenSwapShifts() { ArrayList<Shift> selected = new ArrayList<>(); for (Shift s : shifts) if (isOwnShift(s) && searchSelectedShifts.contains(shiftChoiceKey(s))) selected.add(s); selected.sort(Comparator.comparing(s -> s.from)); return selected; }
     private SwapSearch.Service swapService(Shift s) {
-        if (planningPortal == PlanningPortal.EFFIPLAN && effiplan != null) {
-            String override = getSharedPreferences("effiplan-services-" + effiplan.scopeKey(), MODE_PRIVATE).getString(s.typeId, "");
+        {
+            String override = serviceSettings().getString(s.typeId, "");
             try { return SwapSearch.Service.valueOf(override); } catch (IllegalArgumentException ignored) { }
         }
         return SwapSearch.service(planningPortal == PlanningPortal.EFFIPLAN ? EffiplanRules.serviceLabel(s.translation) : s.translation, s.abbreviation);
@@ -758,7 +1054,8 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (destroyed || generation != requestGeneration || !authenticated) return;
                 if (code >= 200 && code < 300) handler.handle(body);
-                else if (code == 401 || code == 403) clearSession();
+                else if (code == 401) clearSession();
+                else if (code == 403) showLoadError("Il portale non autorizza la lettura della squadra selezionata. Rivedi la squadra nelle Impostazioni.");
                 else showLoadError("Impossibile aggiornare il planning (" + code + ").");
             });
         } catch (Exception e) { runOnUiThread(() -> { if (!destroyed && generation == requestGeneration && authenticated) showLoadError("Impossibile aggiornare. Controlla la connessione e riprova."); }); }
@@ -819,19 +1116,30 @@ public class MainActivity extends Activity {
     }
     private void renderSettings() {
         weekList.removeAllViews(); weekLabel.setText("Impostazioni"); weekSummary.setText("Preferenze e configurazioni dell’app");
+        weekList.addView(text("Impostazioni", 26, INK, true));
+        TextView settingsSubtitle = text("Preferenze e configurazioni dell’app", 14, MUTED, false);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+        subtitleParams.topMargin = dp(4); subtitleParams.bottomMargin = dp(18);
+        weekList.addView(settingsSubtitle, subtitleParams);
         LinearLayout provider = settingsSection("PORTALE", "Scegli il portale usato dal tuo negozio. Il cambio chiude la sessione e riavvia l’app; sarà richiesto un nuovo accesso.");
         provider.addView(text(planningPortal.label, 16, INK, true));
+        searchAction("Rivedi configurazione iniziale", provider, () -> openAccountSetup(true));
         searchAction("Cambia portale", provider, () -> choosePlanningPortal(true)); weekList.addView(provider);
         LinearLayout calendar = settingsSection("GOOGLE CALENDAR", "Scegli il calendario Google dove salvare i turni sincronizzati.");
+        CheckBox syncEnabled = new CheckBox(this); syncEnabled.setText("Abilita sincronizzazione Google Calendar"); syncEnabled.setChecked(calendarEnabled()); calendar.addView(syncEnabled);
+        syncEnabled.setOnCheckedChangeListener((button, enabled) -> { calendarSettings().edit().putBoolean("calendar-sync-enabled", enabled).apply(); renderSettings(); });
+        LinearLayout calendarOptions = new LinearLayout(this); calendarOptions.setOrientation(LinearLayout.VERTICAL); calendarOptions.setVisibility(calendarEnabled() ? View.VISIBLE : View.GONE); calendar.addView(calendarOptions);
         long calendarId = selectedCalendarId();
-        calendar.addView(text(calendarId < 0 ? "Nessun calendario collegato." : "Calendario selezionato: " + selectedCalendarName(), 14, INK, false));
-        Button calendarAction = compactButton(calendarId < 0 ? "COLLEGA CALENDARIO" : "CAMBIA CALENDARIO"); calendarAction.setAllCaps(false); calendarAction.setOnClickListener(v -> chooseGoogleCalendar()); calendar.addView(calendarAction, calendarButtonParams());
-        TextView notifications = text("NOTIFICHE DEGLI EVENTI", 11, NAVY, true); notifications.setPadding(0, dp(18), 0, dp(6)); calendar.addView(notifications);
-        calendar.addView(text("Scegli fino a due avvisi prima dell’inizio del turno. Le modifiche si applicano alla prossima sincronizzazione della settimana. Le notifiche sono gestite dall’app calendario.", 12, MUTED, false));
-        addReminderSetting(calendar, 0, "Primo avviso", 1440);
-        addReminderSetting(calendar, 1, "Secondo avviso", 60);
+        calendarOptions.addView(text(calendarId < 0 ? "Nessun calendario collegato." : "Calendario selezionato: " + selectedCalendarName(), 14, INK, false));
+        Button calendarAction = compactButton(calendarId < 0 ? "COLLEGA CALENDARIO" : "CAMBIA CALENDARIO"); calendarAction.setAllCaps(false); calendarAction.setOnClickListener(v -> chooseGoogleCalendar()); calendarOptions.addView(calendarAction, calendarButtonParams());
+        TextView notifications = text("NOTIFICHE DEGLI EVENTI", 11, NAVY, true); notifications.setPadding(0, dp(18), 0, dp(6)); calendarOptions.addView(notifications);
+        calendarOptions.addView(text("Scegli fino a due avvisi prima dell’inizio del turno. Le modifiche si applicano alla prossima sincronizzazione della settimana. Le notifiche sono gestite dall’app calendario.", 12, MUTED, false));
+        addReminderSetting(calendarOptions, 0, "Primo avviso", 1440);
+        addReminderSetting(calendarOptions, 1, "Secondo avviso", 60);
         weekList.addView(calendar);
         LinearLayout team = settingsSection("IL MIO TEAM", "Gestisci le informazioni e le configurazioni della tua squadra.");
+        team.addView(text("Squadra di appartenenza: " + ownTeamTitle(), 14, INK, true));
+        searchAction("Verifica squadra e configurazione", team, () -> { currentMembership = null; openAccountSetup(true); });
         if (teamUuid.isEmpty()) {
             team.addView(text("Nessuna squadra associata al portale selezionato.", 14, MUTED, false));
         } else if (collaborators.isEmpty()) {
@@ -842,9 +1150,12 @@ public class MainActivity extends Activity {
             Button teamAction = compactButton(configured ? "MODIFICA SQUADRA" : "CONFIGURA SQUADRA"); teamAction.setAllCaps(false); teamAction.setOnClickListener(v -> configureSwapTeam()); team.addView(teamAction, calendarButtonParams());
         }
         weekList.addView(team);
-        if (planningPortal == PlanningPortal.EFFIPLAN) renderEffiplanServiceSettings();
+        renderServiceSettings();
     }
-    private void renderEffiplanServiceSettings() {
+    private android.content.SharedPreferences serviceSettings() {
+        return getSharedPreferences((effiplan == null ? "eplanning-services-" : "effiplan-services-") + accountScope, MODE_PRIVATE);
+    }
+    private void renderServiceSettings() {
         LinearLayout section = settingsSection("TIPI DI TURNO", "Nomi e codici arrivano dalle API. Per la ricerca cambi puoi assegnare una categoria anche ai servizi specifici del tuo negozio. I tipi non riconosciuti restano esclusi finché non li configuri; colori e nomi del portale non vengono modificati.");
         Map<String, Shift> types = new java.util.TreeMap<>();
         for (Shift shift : shifts) types.put(shift.typeId, shift);
@@ -855,13 +1166,13 @@ public class MainActivity extends Activity {
             row.setAllCaps(false);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(6); section.addView(row, params);
             row.setOnClickListener(v -> {
-                final int generation = requestGeneration; final EffiplanApi client = effiplan;
+                final int generation = requestGeneration; final String scope = accountScope;
                 final int[] selected = { swapService(shift).ordinal() };
                 new AppDialogs.Builder(this).setTitle(shift.typeLabel())
                     .setSingleChoiceItems(categories, selected[0], (d, which) -> selected[0] = which)
                     .setNegativeButton("Annulla", null).setPositiveButton("Salva categoria", (d, which) -> {
-                        if (destroyed || !authenticated || client == null || client != effiplan || generation != requestGeneration) return;
-                        getSharedPreferences("effiplan-services-" + client.scopeKey(), MODE_PRIVATE).edit().putString(shift.typeId, SwapSearch.Service.values()[selected[0]].name()).apply();
+                        if (destroyed || !authenticated || !scope.equals(accountScope) || generation != requestGeneration) return;
+                        serviceSettings().edit().putString(shift.typeId, SwapSearch.Service.values()[selected[0]].name()).apply();
                         renderSettings();
                     }).show();
             });
@@ -874,7 +1185,7 @@ public class MainActivity extends Activity {
         section.addView(text(title, 11, NAVY, true)); TextView help = text(description, 12, MUTED, false); LinearLayout.LayoutParams helpParams = new LinearLayout.LayoutParams(-1, -2); helpParams.topMargin = dp(4); helpParams.bottomMargin = dp(10); section.addView(help, helpParams);
         return section;
     }
-    private static final int[] REMINDER_TIMES = { 0, 5, 10, 15, 30, 60, 120, 240, 720, 1440, 2880, 10080 };
+    private static final int[] REMINDER_TIMES = SetupRules.REMINDER_TIMES;
     private static final String[] REMINDER_LABELS = { "All’inizio", "5 minuti prima", "10 minuti prima", "15 minuti prima", "30 minuti prima", "1 ora prima", "2 ore prima", "4 ore prima", "12 ore prima", "1 giorno prima", "2 giorni prima", "1 settimana prima" };
     private void addReminderSetting(LinearLayout parent, int index, String label, int defaultMinutes) {
         android.content.SharedPreferences prefs = calendarSettings();
@@ -909,12 +1220,12 @@ public class MainActivity extends Activity {
         return events.toString() + "|" + alerts + "|" + ZoneId.systemDefault().getId();
     }
     private void updateCalendarSyncIndicator() {
-        boolean visible = currentTab == Tab.WEEK && authenticated;
+        boolean visible = currentTab == Tab.WEEK && authenticated && !configuringAccount;
         calendarSyncButton.setVisibility(visible ? View.VISIBLE : View.GONE);
         calendarSyncButton.setEnabled(visible && weekReady && !calendarSyncing);
         calendarSyncButton.setAlpha(calendarSyncing ? .4f : 1f);
         if (!visible) { calendarSyncIndicator.setVisibility(View.GONE); return; }
-        String saved = calendarSettings().getString(calendarSyncKey(collaboratorUuid, selectedCalendarId(), currentWeek), "");
+        String saved = calendarEnabled() ? calendarSettings().getString(calendarSyncKey(collaboratorUuid, selectedCalendarId(), currentWeek), "") : "";
         boolean synced = !saved.isEmpty();
         boolean changed = synced && weekReady && !saved.equals(weekSyncFingerprint(shiftsInPeriod(currentWeek, currentWeek.plusDays(6)), configuredReminders()));
         calendarSyncIndicator.setVisibility(synced ? View.VISIBLE : View.GONE);
@@ -924,7 +1235,8 @@ public class MainActivity extends Activity {
         calendarSyncButton.setContentDescription(synced ? "Settimana già sincronizzata. Sincronizza nuovamente su Google Calendar" : "Sincronizza settimana su Google Calendar");
     }
     private void confirmCalendarSync() {
-        if (!weekReady || currentTab != Tab.WEEK || calendarSyncing) return;
+        if (!authenticated || accountScope.isEmpty() || configuringAccount || !weekReady || currentTab != Tab.WEEK || calendarSyncing) return;
+        if (!calendarEnabled() || selectedCalendarId() < 0) { configureCalendarPopup(); return; }
         final long calendar = selectedCalendarId();
         if (calendar < 0) {
             new AppDialogs.Builder(this).setTitle("Collega un calendario").setMessage("Seleziona il calendario Google nelle Impostazioni prima di sincronizzare i turni.").setNegativeButton("Annulla", null).setPositiveButton("Impostazioni", (d, w) -> selectTab(Tab.SETTINGS)).show(); return;
@@ -940,17 +1252,68 @@ public class MainActivity extends Activity {
         }).show();
     }
     private LinearLayout.LayoutParams calendarButtonParams() { LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(44)); params.topMargin = dp(7); return params; }
-    private android.content.SharedPreferences calendarSettings() { return getSharedPreferences(planningPortal.calendarPreferences() + (effiplan == null ? "" : "-" + effiplan.scopeKey()), MODE_PRIVATE); }
+    private void configureCalendarPopup() {
+        final String scope = accountScope;
+        final SetupRules.Draft draft = setupDraft();
+        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(16), dp(8), dp(16), dp(8));
+        panel.addView(text("Scegli il calendario e gli avvisi. Nessun evento verrà creato: la sincronizzazione richiederà una conferma separata.", 13, MUTED, false));
+        CheckBox enabled = new CheckBox(this); enabled.setText("Abilita Google Calendar"); enabled.setChecked(true); panel.addView(enabled);
+        Button choose = compactButton(draft.calendarId >= 0 ? draft.calendarName : "Scegli calendario Google"); panel.addView(choose);
+        for (int index = 0; index < 2; index++) {
+            final int i = index;
+            CheckBox reminder = new CheckBox(this); reminder.setText(i == 0 ? "Primo avviso" : "Secondo avviso"); reminder.setChecked(draft.reminderEnabled[i]); panel.addView(reminder);
+            Spinner time = new Spinner(this);
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, REMINDER_LABELS);
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); time.setAdapter(adapter);
+            for (int n = 0; n < REMINDER_TIMES.length; n++) if (REMINDER_TIMES[n] == draft.reminderMinutes[i]) time.setSelection(n);
+            time.setEnabled(reminder.isChecked()); panel.addView(time);
+            reminder.setOnCheckedChangeListener((button, checked) -> { draft.reminderEnabled[i] = checked; time.setEnabled(checked); });
+            time.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { draft.reminderMinutes[i] = REMINDER_TIMES[position]; }
+                public void onNothingSelected(AdapterView<?> parent) { }
+            });
+        }
+        AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Configura Google Calendar").setView(panel)
+            .setNegativeButton("Annulla", null).setPositiveButton("Salva", null).create();
+        choose.setOnClickListener(v -> chooseGoogleCalendar(calendar -> {
+            if (!dialog.isShowing() || !scope.equals(accountScope)) return;
+            draft.calendarId = calendar.id; draft.calendarName = calendar.name; choose.setText(calendar.name);
+        }));
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (!authenticated || !scope.equals(accountScope) || configuringAccount) { dialog.dismiss(); return; }
+            if (enabled.isChecked() && (draft.calendarId < 0 || !hasCalendarPermission())) {
+                Toast.makeText(this, "Scegli un calendario e consenti l’accesso.", Toast.LENGTH_LONG).show(); return;
+            }
+            android.content.SharedPreferences.Editor editor = calendarSettings().edit()
+                .putBoolean("calendar-sync-enabled", enabled.isChecked()).putLong(SELECTED_CALENDAR_ID, draft.calendarId).putString(SELECTED_CALENDAR_NAME, draft.calendarName);
+            for (int i = 0; i < 2; i++) editor.putBoolean("reminder-enabled-" + i, draft.reminderEnabled[i]).putInt("reminder-minutes-" + i, draft.reminderMinutes[i]);
+            editor.apply(); dialog.dismiss(); updateCalendarSyncIndicator();
+        }));
+        dialog.show();
+    }
+    private android.content.SharedPreferences calendarSettings() { return getSharedPreferences(planningPortal.calendarPreferences(accountScope), MODE_PRIVATE); }
+    private boolean calendarEnabled() { return calendarSettings().getBoolean("calendar-sync-enabled", selectedCalendarId() >= 0); }
     private long selectedCalendarId() { return calendarSettings().getLong(SELECTED_CALENDAR_ID, -1); }
     private String selectedCalendarName() { return calendarSettings().getString(SELECTED_CALENDAR_NAME, "Calendario Google"); }
     private boolean hasCalendarPermission() { return checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED; }
     private void chooseGoogleCalendar() {
-        if (!hasCalendarPermission()) { requestPermissions(new String[] { Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR }, CALENDAR_PERMISSION_REQUEST); return; }
+        chooseGoogleCalendar(chosen -> {
+            calendarSettings().edit().putLong(SELECTED_CALENDAR_ID, chosen.id).putString(SELECTED_CALENDAR_NAME, chosen.name).apply();
+            if (currentTab == Tab.WEEK) renderWeek(); else if (currentTab == Tab.SETTINGS) renderSettings();
+        });
+    }
+    private void chooseGoogleCalendar(java.util.function.Consumer<CalendarChoice> selected) {
+        if (!authenticated || accountScope.isEmpty()) return;
+        final String scope = accountScope;
+        if (!hasCalendarPermission()) {
+            pendingCalendarSelection = selected; pendingCalendarScope = scope;
+            requestPermissions(new String[] { Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR }, CALENDAR_PERMISSION_REQUEST); return;
+        }
         executor.execute(() -> {
             ArrayList<CalendarChoice> calendars = new ArrayList<>();
             try { calendars = readGoogleCalendars(); } catch (SecurityException ignored) { }
             final ArrayList<CalendarChoice> available = calendars;
-            runOnUiThread(() -> showCalendarChoices(available));
+            runOnUiThread(() -> { if (!destroyed && authenticated && scope.equals(accountScope) && !selectingPortal) showCalendarChoices(available, selected, scope); });
         });
     }
     private ArrayList<CalendarChoice> readGoogleCalendars() {
@@ -962,8 +1325,8 @@ public class MainActivity extends Activity {
             }
             return calendars;
     }
-    private void showCalendarChoices(ArrayList<CalendarChoice> calendars) {
-        if (destroyed) return;
+    private void showCalendarChoices(ArrayList<CalendarChoice> calendars, java.util.function.Consumer<CalendarChoice> selection, String scope) {
+        if (destroyed || !authenticated || !scope.equals(accountScope)) return;
         LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setPadding(dp(18), dp(12), dp(18), dp(8));
         TextView help = text(calendars.isEmpty() ? "Nessun calendario disponibile. Premi ↻ per richiedere la sincronizzazione con Google." : "Dove vuoi salvare i tuoi turni?\nSeleziona un calendario e premi Conferma.", 14, MUTED, false); help.setPadding(0, 0, 0, dp(14)); content.addView(help);
         TextView syncHelp = text("Un calendario manca? Premi ↻ e attendi. Se non compare, apri Google Calendar → Impostazioni → Mostra altri e attiva la sincronizzazione del calendario.", 12, MUTED, false); syncHelp.setPadding(0, 0, 0, dp(12)); content.addView(syncHelp);
@@ -987,6 +1350,8 @@ public class MainActivity extends Activity {
         populate.run();
         scroll.addView(choices); content.addView(scroll, new LinearLayout.LayoutParams(-1, Math.min(dp(280), Math.max(dp(100), calendars.size() * dp(100)))));
         AlertDialog dialog = new AppDialogs.Builder(this).setTitle("Il tuo calendario Google").setView(content).setNeutralButton(" ", null).setNegativeButton("Annulla", null).setPositiveButton("Conferma", null).create();
+        if (activeCalendarDialog != null) activeCalendarDialog.dismiss();
+        activeCalendarDialog = dialog;
         choices.setOnCheckedChangeListener((group, id) -> {
             for (int i = 0; i < group.getChildCount(); i++) if (group.getChildAt(i).getId() == id) selected[0] = calendars.get(i);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(selected[0] != null);
@@ -994,10 +1359,8 @@ public class MainActivity extends Activity {
         dialog.setOnShowListener(ignored -> {
             Button confirm = dialog.getButton(AlertDialog.BUTTON_POSITIVE); confirm.setEnabled(selected[0] != null);
             confirm.setOnClickListener(v -> {
-            CalendarChoice chosen = selected[0]; if (chosen == null) return;
-            calendarSettings().edit().putLong(SELECTED_CALENDAR_ID, chosen.id).putString(SELECTED_CALENDAR_NAME, chosen.name).apply(); dialog.dismiss();
-            if (currentTab == Tab.WEEK) renderWeek();
-            else if (currentTab == Tab.SETTINGS) renderSettings();
+            CalendarChoice chosen = selected[0]; if (chosen == null || !authenticated || !scope.equals(accountScope)) return;
+            dialog.dismiss(); selection.accept(chosen);
             });
         Button refresh = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
         refresh.setText(""); refresh.setContentDescription("Aggiorna elenco calendari");
@@ -1006,7 +1369,7 @@ public class MainActivity extends Activity {
         refresh.getLayoutParams().width = dp(56);
         Runnable reload = () -> {
             if (destroyed || !dialog.isShowing()) return;
-            if (!hasCalendarPermission()) { dialog.dismiss(); chooseGoogleCalendar(); return; }
+            if (!hasCalendarPermission()) { dialog.dismiss(); chooseGoogleCalendar(selection); return; }
             refresh.setEnabled(false); refresh.setAlpha(.4f);
             executor.execute(() -> {
                 try {
@@ -1037,9 +1400,9 @@ public class MainActivity extends Activity {
             @Override public void onChange(boolean selfChange) { reload.run(); }
         };
         getContentResolver().registerContentObserver(CalendarContract.Calendars.CONTENT_URI, true, observer);
-        dialog.setOnDismissListener(d -> getContentResolver().unregisterContentObserver(observer));
+        dialog.setOnDismissListener(d -> { getContentResolver().unregisterContentObserver(observer); if (activeCalendarDialog == dialog) activeCalendarDialog = null; });
         refresh.setOnClickListener(v -> {
-            if (!hasCalendarPermission()) { dialog.dismiss(); chooseGoogleCalendar(); return; }
+            if (!hasCalendarPermission()) { dialog.dismiss(); chooseGoogleCalendar(selection); return; }
             Bundle extras = new Bundle();
             extras.putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true);
             extras.putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true);
@@ -1059,11 +1422,16 @@ public class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode == CALENDAR_PERMISSION_REQUEST) {
-            if (hasCalendarPermission()) chooseGoogleCalendar();
+            java.util.function.Consumer<CalendarChoice> selected = pendingCalendarSelection;
+            String scope = pendingCalendarScope; pendingCalendarSelection = null; pendingCalendarScope = "";
+            if (selected == null || !authenticated || !scope.equals(accountScope)) return;
+            if (hasCalendarPermission()) chooseGoogleCalendar(selected);
+            else if (setupController != null) setupController.error("Permesso calendario negato. Puoi riprovare o proseguire disattivando la sincronizzazione.");
             else new AppDialogs.Builder(this).setTitle("Permesso necessario").setMessage("Per sincronizzare i turni, consenti a E-PLANNING di leggere e modificare il calendario.").setPositiveButton("Ho capito", null).show();
         }
     }
     private void syncWeekToCalendar(ArrayList<Shift> visible) {
+        if (!authenticated || accountScope.isEmpty() || !calendarEnabled() || configuringAccount) return;
         if (!hasCalendarPermission()) { chooseGoogleCalendar(); return; }
         if (calendarSyncing) return;
         final long calendarId = selectedCalendarId();
@@ -1468,7 +1836,7 @@ public class MainActivity extends Activity {
         return luminance > .179 ? Color.BLACK : Color.WHITE;
     }
     private int lighten(int color, float amount) { int r = (int) (Color.red(color) + (255 - Color.red(color)) * amount), g = (int) (Color.green(color) + (255 - Color.green(color)) * amount), b = (int) (Color.blue(color) + (255 - Color.blue(color)) * amount); return Color.rgb(r, g, b); }
-    @Override protected void onDestroy() { destroyed = true; if (updater != null) updater.destroy(); if (workday != null) workday.destroy(); authGeneration++; authHandler.removeCallbacksAndMessages(null); requestGeneration++; executor.shutdownNow(); portal.destroy(); super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed = true; if (setupController != null) setupController.destroy(); if (activeCalendarDialog != null) activeCalendarDialog.dismiss(); pendingCalendarSelection = null; if (updater != null) updater.destroy(); if (workday != null) workday.destroy(); authGeneration++; authHandler.removeCallbacksAndMessages(null); requestGeneration++; executor.shutdownNow(); portal.destroy(); super.onDestroy(); }
 
     private static class Shift {
         LocalDateTime from, to; LocalDate date; String translation, abbreviation, collaborator, collaboratorId, typeId; int color; Integer fontColor;
@@ -1491,9 +1859,5 @@ public class MainActivity extends Activity {
         }
         String typeLabel() { return abbreviation.isEmpty() ? translation : abbreviation + "-" + translation; }
         String label() { String type = typeLabel(); return collaborator.isEmpty() ? type : collaborator + " · " + type; }
-    }
-    private static class CalendarChoice {
-        final long id; final String name; final String account;
-        CalendarChoice(long id, String name, String account) { this.id = id; this.name = name == null ? "Calendario Google" : name; this.account = account == null ? "" : account; }
     }
 }
