@@ -1,5 +1,28 @@
 # Novità
 
+- E‑Planning · lettura delle squadre tramite l’API della Pianificazione globale, verificata sul portale; disponibile anche Tutto il negozio in vista giornaliera.
+- E‑Planning · messaggio esplicito quando il server nega la consultazione di altre squadre per i permessi del profilo, anche con risposta HTTP 400.
+- E‑Planning · elenco componenti delle altre squadre letto tramite l’API dedicata, invece del PlanningManager.
+- E‑Planning · diagnostica del caricamento squadra senza dati personali o token.
+- Squadra · titolo del giorno sempre visibile durante lo scorrimento orizzontale in tutti i raggruppamenti.
+- Squadra · intervallo automatico: settimana per le squadre, giorno per popolazioni/negozi Effiplan; assi trasparenti ancorati durante lo scorrimento.
+- E‑Planning · consultazione delle altre squadre tramite planning mensile dei componenti, senza endpoint riservato ai manager.
+- Squadra · selettore squadra ripristinato su entrambi i portali; barra fissa con etichette e campi compatti.
+- Squadra · comandi compatti fissi sopra al planning; la settimana apre con il giorno corrente come primo contenuto visibile.
+- Squadra · preferenze di intervallo e raggruppamento persistenti; apertura e cambio intervallo riportano al giorno/settimana corrente.
+- Testata · rimosso il sottotitolo provvisorio prima dell’indicazione del portale.
+- Testata · nome del portale in corsivo.
+- Testata · il sottotitolo indica il portale selezionato.
+- Navigazione · tocco su icona o nome dell’app per tornare alla settimana corrente; portale attivo sempre indicato nella testata.
+- Scelta portale · URL dei portali mostrati sotto il nome, in piccolo grigio corsivo.
+- E‑Planning · i turni già conclusi della settimana corrente restano visibili.
+- Accesso · dopo il login ogni pagina HTTPS sul dominio autorizzato acquisisce subito la sessione, anche con atterraggi diversi dalla home.
+- Interfaccia · errore di caricamento spostato dall’intestazione a una schermata dedicata con pulsante Riprova.
+- Effiplan · richieste di assenza opzionali: un modello che non le espone non blocca più il caricamento del planning.
+- Effiplan · richieste di assenza, come INDISPO, mostrate senza conteggio nel monte ore.
+- Effiplan · PAV e tutte le altre voci in Assenze compaiono nel planning e le assenze orarie entrano nel monte ore.
+- Effiplan · numeri settimana allineati al portale (domenica–sabato, settimana contenente il 1° gennaio = 1).
+- Effiplan · corretto il limite finale della query: i turni del sabato rientrano nel totale domenica–sabato.
 - Impostazioni · rimossa la barra di navigazione dei periodi su entrambi i portali.
 - Account · configurazione separata per utente e portale, anche sullo stesso dispositivo.
 - Cambio portale · nessuna nuova configurazione se l’account del portale selezionato è già configurato.

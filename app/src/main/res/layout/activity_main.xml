@@ -1,9 +1,9 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/appRoot" android:orientation="vertical" android:background="#172554" android:layout_width="match_parent" android:layout_height="match_parent">
     <LinearLayout android:id="@+id/header" android:orientation="horizontal" android:gravity="center_vertical" android:background="#172554" android:padding="24dp" android:layout_width="match_parent" android:layout_height="wrap_content">
-        <ImageView android:src="@drawable/ic_app_logo" android:background="@drawable/bg_app_icon" android:padding="8dp" android:contentDescription="@string/app_name" android:layout_width="46dp" android:layout_height="46dp" />
+        <ImageView android:id="@+id/homeIcon" android:src="@drawable/ic_app_logo" android:background="@drawable/bg_app_icon" android:padding="8dp" android:contentDescription="Vai alla settimana corrente" android:clickable="true" android:focusable="true" android:layout_width="46dp" android:layout_height="46dp" />
         <LinearLayout android:orientation="vertical" android:layout_marginStart="12dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content">
             <TextView android:id="@+id/title" android:text="@string/header_title" android:textColor="#FFFFFF" android:textSize="27sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
-            <TextView android:id="@+id/subtitle" android:text="Il tuo planning, senza complicazioni" android:textColor="#BFDBFE" android:textSize="15sp" android:layout_marginTop="3dp" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <TextView android:id="@+id/subtitle" android:textColor="#BFDBFE" android:textSize="15sp" android:textStyle="italic" android:layout_marginTop="3dp" android:layout_width="wrap_content" android:layout_height="wrap_content" />
         </LinearLayout>
         <ImageButton android:id="@+id/refresh" android:src="@drawable/ic_refresh" android:tint="#FFFFFF" android:contentDescription="Aggiorna dati ePlanning" android:background="@drawable/bg_logout" android:padding="9dp" android:layout_marginStart="6dp" android:layout_width="42dp" android:layout_height="42dp" />
         <FrameLayout android:layout_marginStart="6dp" android:layout_width="42dp" android:layout_height="42dp">
@@ -25,7 +25,7 @@
                 <ImageButton android:id="@+id/calendarSync" android:src="@drawable/ic_calendar_sync" android:contentDescription="Sincronizza settimana su Google Calendar" android:background="@drawable/bg_period" android:padding="8dp" android:visibility="gone" android:layout_marginStart="6dp" android:layout_width="40dp" android:layout_height="40dp" />
             </LinearLayout>
         </LinearLayout>
-        <TextView android:id="@+id/status" android:visibility="gone" android:background="@drawable/bg_summary" android:padding="14dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <TextView android:id="@+id/status" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" />
         <LinearLayout android:id="@+id/punchPreview" android:orientation="horizontal" android:gravity="center_vertical" android:background="@drawable/bg_punch_card" android:padding="12dp" android:layout_marginTop="12dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content">
             <ImageView android:src="@drawable/ic_time_clock" android:background="@drawable/bg_filter" android:padding="10dp" android:importantForAccessibility="no" android:layout_width="44dp" android:layout_height="44dp" />
             <LinearLayout android:orientation="vertical" android:layout_marginStart="12dp" android:layout_marginEnd="10dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content">
@@ -34,8 +34,21 @@
             </LinearLayout>
             <Button android:id="@+id/punchButton" android:text="Timbra" android:enabled="false" android:textAllCaps="false" android:textStyle="bold" android:textSize="13sp" android:textColor="#FFFFFF" android:background="@drawable/bg_punch_button" android:paddingLeft="12dp" android:paddingRight="12dp" android:minWidth="0dp" android:contentDescription="Registra la presenza di oggi" android:layout_width="wrap_content" android:layout_height="48dp" />
         </LinearLayout>
-        <Button android:id="@+id/populationSelector" android:text="Popolazione · Squadra predefinita" android:textAllCaps="false" android:textSize="13sp" android:textColor="#192A4A" android:background="@drawable/bg_filter" android:padding="10dp" android:layout_marginTop="10dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
-        <ScrollView android:fillViewport="true" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="14dp">
+        <LinearLayout android:id="@+id/teamControls" android:visibility="gone" android:orientation="horizontal" android:background="@drawable/bg_day" android:padding="10dp" android:layout_marginTop="10dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1.2" android:layout_height="wrap_content">
+                <TextView android:text="SQUADRA" android:textColor="#64748B" android:textSize="9sp" android:textStyle="bold" android:layout_marginBottom="5dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <Button android:id="@+id/populationSelector" android:text="Squadra ▾" android:textAllCaps="false" android:textSize="12sp" android:singleLine="true" android:ellipsize="end" android:gravity="center_vertical|start" android:textColor="#192A4A" android:background="@drawable/bg_filter" android:paddingLeft="8dp" android:paddingRight="8dp" android:layout_width="match_parent" android:layout_height="48dp" android:minWidth="0dp" />
+            </LinearLayout>
+            <LinearLayout android:orientation="vertical" android:layout_marginStart="8dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content">
+                <TextView android:text="INTERVALLO" android:textColor="#64748B" android:textSize="9sp" android:textStyle="bold" android:layout_marginBottom="5dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <Spinner android:id="@+id/teamIntervalSelector" android:background="@drawable/bg_filter" android:paddingLeft="4dp" android:paddingRight="4dp" android:layout_width="match_parent" android:layout_height="48dp" />
+            </LinearLayout>
+            <LinearLayout android:orientation="vertical" android:layout_marginStart="8dp" android:layout_width="0dp" android:layout_weight="1.3" android:layout_height="wrap_content">
+                <TextView android:text="RAGGRUPPAMENTO" android:textColor="#64748B" android:textSize="9sp" android:textStyle="bold" android:layout_marginBottom="5dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <Spinner android:id="@+id/teamGroupingSelector" android:background="@drawable/bg_filter" android:paddingLeft="4dp" android:paddingRight="4dp" android:layout_width="match_parent" android:layout_height="48dp" />
+            </LinearLayout>
+        </LinearLayout>
+        <ScrollView android:id="@+id/planningScroll" android:fillViewport="true" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="14dp">
             <LinearLayout android:id="@+id/weekList" android:orientation="vertical" android:paddingBottom="18dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
         </ScrollView>
     </LinearLayout>
@@ -61,8 +74,8 @@
             <TextView android:id="@+id/portalChoiceTitle" android:text="Il tuo portale di planning" android:textColor="#192A4A" android:textStyle="bold" android:textSize="30sp" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
             <TextView android:id="@+id/portalChoiceHelp" android:textColor="#64748B" android:textSize="15sp" android:lineSpacingExtra="3dp" android:layout_marginTop="12dp" android:layout_marginBottom="24dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
             <RadioGroup android:id="@+id/portalChoices" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
-                <RadioButton android:id="@+id/chooseEplanning" android:text="E-Planning\nNuovo portale" android:textColor="#192A4A" android:textSize="17sp" android:background="@drawable/bg_day" android:padding="16dp" android:minHeight="88dp" android:layout_marginBottom="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
-                <RadioButton android:id="@+id/chooseEffiplan" android:text="Effiplan\nPortale Horoquartz" android:textColor="#192A4A" android:textSize="17sp" android:background="@drawable/bg_day" android:padding="16dp" android:minHeight="88dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <RadioButton android:id="@+id/chooseEplanning" android:textColor="#192A4A" android:textSize="17sp" android:background="@drawable/bg_day" android:padding="16dp" android:minHeight="88dp" android:layout_marginBottom="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <RadioButton android:id="@+id/chooseEffiplan" android:textColor="#192A4A" android:textSize="17sp" android:background="@drawable/bg_day" android:padding="16dp" android:minHeight="88dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
             </RadioGroup>
             <Button android:id="@+id/confirmPortalChoice" android:text="Continua" android:enabled="false" android:textAllCaps="false" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="16sp" android:background="@drawable/bg_punch_button" android:layout_marginTop="24dp" android:layout_width="match_parent" android:layout_height="52dp" />
             <Button android:id="@+id/cancelPortalChoice" android:text="Annulla" android:textAllCaps="false" android:textColor="#243B74" android:background="@android:color/transparent" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="48dp" />

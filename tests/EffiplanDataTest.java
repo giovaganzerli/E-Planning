@@ -86,6 +86,21 @@ public class EffiplanDataTest {
         check(block.getString("from").equals("2026-11-27T00:00") && block.getString("to").equals("2026-11-28T00:00"), "clip inclusive absence days");
         JSONObject timed = content("test-user", new JSONObject().put("abs", new JSONArray().put(new JSONObject().put("timePeriod", new JSONObject().put("sdt", "2026-11-27 10:00").put("edt", "2026-11-27 12:00")))));
         check(EffiplanData.absences(timed, day, day).getJSONObject(0).getString("from").endsWith("T10:00"), "timed absence");
+        JSONObject personal = content("test-user", new JSONObject().put("pst", new JSONArray().put(post("2026-11-27 09:00", "2026-11-27 13:00")))
+            .put("abs", new JSONArray().put(new JSONObject().put("reason", "PAV").put("timePeriod", new JSONObject().put("sdt", "2026-11-27 14:00").put("edt", "2026-11-27 16:00")))));
+        personal.put("datas", new JSONObject().put("reason", new JSONObject().put("PAV", new JSONObject().put("title", "PAV").put("colors", new JSONObject().put("back", "7E22CE").put("font", "FFFFFF")))));
+        JSONArray personalItems = EffiplanData.personalPlanning(personal, day, day, "test-user", new JSONObject());
+        check(personalItems.length() == 2 && personalItems.getJSONObject(1).optBoolean("absence")
+            && personalItems.getJSONObject(1).getJSONObject("hourTypology").getString("translation").equals("PAV"), "timed absence is shown with official reason");
+        check(EffiplanData.personalPlanning(personal, day.plusDays(1), day.plusDays(1), "test-user", new JSONObject()).length() == 0, "absence respects visible range");
+        JSONObject fullDayPersonal = content("test-user", new JSONObject().put("abs", new JSONArray().put(new JSONObject().put("reason", "PAV")
+            .put("period", new JSONObject().put("sd", "2026-11-27").put("ed", "2026-11-28")))));
+        JSONArray fullDayItems = EffiplanData.personalPlanning(fullDayPersonal, day, day.plusDays(1), "test-user", new JSONObject());
+        check(fullDayItems.length() == 2 && fullDayItems.getJSONObject(0).optBoolean("allDay") && fullDayItems.getJSONObject(1).optBoolean("absence"), "day-only absence labels are shown without inventing hours");
+        JSONObject requestPersonal = content("test-user", new JSONObject().put("req", new JSONArray().put(new JSONObject().put("reason", "INDISPO")
+            .put("timePeriod", new JSONObject().put("sdt", "2026-11-27 14:00").put("edt", "2026-11-27 16:00")))));
+        JSONArray requestItems = EffiplanData.personalPlanning(requestPersonal, day, day, "test-user", new JSONObject());
+        check(requestItems.length() == 1 && requestItems.getJSONObject(0).optBoolean("nonWorking") && requestItems.getJSONObject(0).getJSONObject("hourTypology").getString("translation").equals("INDISPO"), "absence request is shown but marked non-working");
         JSONObject menu = new JSONObject().put("menu", new JSONObject().put("entries", new JSONArray().put(new JSONObject().put("code", "clock").put("authorizations", new JSONArray().put(new JSONObject().put("global", "R"))))));
         check(!EffiplanData.canClock(menu), "read permission must not allow punching");
         menu.getJSONObject("menu").getJSONArray("entries").getJSONObject(0).getJSONArray("authorizations").getJSONObject(0).put("global", "CRUD");

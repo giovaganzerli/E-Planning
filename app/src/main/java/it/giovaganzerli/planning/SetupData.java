@@ -8,6 +8,45 @@ import java.util.List;
 import java.util.Map;
 
 final class SetupData {
+    /** Global planning is a day-level, collaborator-authorised read, not a manager roster. */
+    static JSONObject eplanningGlobalDay(JSONArray groups, String teamName, java.time.LocalDate day) throws Exception {
+        JSONObject members = new JSONObject();
+        JSONArray shifts = new JSONArray();
+        int matches = 0;
+        for (int i = 0; i < groups.length(); i++) {
+            JSONObject group = groups.getJSONObject(i);
+            if (teamName != null && !teamName.trim().equalsIgnoreCase(group.getString("teamName").trim())) continue;
+            if (teamName != null && ++matches > 1) throw new Exception("Nome squadra ambiguo nel planning globale");
+            JSONArray people = group.getJSONArray("collaboratorsPlanningGlobalDto");
+            for (int j = 0; j < people.length(); j++) {
+                JSONObject person = people.getJSONObject(j);
+                String id = person.getString("collaboratorUuid");
+                if (!uuid(id)) throw new Exception("Collaboratore globale non valido");
+                members.put(id, (person.optString("collaboratorName") + " " + person.optString("collaboratorFirsLastName")).trim());
+                JSONArray periods = person.getJSONArray("periods");
+                for (int k = 0; k < periods.length(); k++) {
+                    JSONObject period = periods.getJSONObject(k);
+                    if (!id.equals(period.getString("collaboratorUuid"))) throw new Exception("Identità turno globale non corrispondente");
+                    java.time.LocalDateTime from = java.time.LocalDateTime.parse(period.getString("fromHour"));
+                    java.time.LocalDateTime to = java.time.LocalDateTime.parse(period.getString("toHour"));
+                    if (!to.isAfter(from)) throw new Exception("Orari globali non validi");
+                    if (!from.toLocalDate().equals(day)) continue;
+                    shifts.put(new JSONObject(period.toString()).put("date", day.toString())
+                        .put("hourTypology", new JSONObject().put("uuid", period.optString("hourTypologyUuid"))
+                            .put("translation", period.optString("translation", "Turno")).put("color", period.optString("hourTypologyColor", "#2563EB"))));
+                }
+            }
+        }
+        return new JSONObject().put("members", members).put("shifts", shifts);
+    }
+    static boolean eplanningAuthorizationDenied(String body) {
+        try {
+            JSONArray errors = new JSONObject(body).optJSONArray("exceptions");
+            if (errors != null) for (int i = 0; i < errors.length(); i++)
+                if ("PROFILE_AUTHORIZATION_ERROR".equals(errors.getJSONObject(i).optString("translationCode"))) return true;
+        } catch (Exception ignored) { }
+        return false;
+    }
     static SetupRules.Team uniqueMembership(List<SetupRules.Team> matches) throws Exception {
         if (matches.size() != 1) throw new Exception("Appartenenza assente o ambigua: seleziona la squadra manualmente.");
         return matches.get(0);

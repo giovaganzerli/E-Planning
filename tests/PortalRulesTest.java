@@ -17,10 +17,16 @@ public class PortalRulesTest {
             check(PlanningPortal.EPLANNING.weekStart(sunday.plusDays(offset + 1)).equals(sunday.plusDays(1)), "E-Planning remains Monday through Sunday");
         }
         check(PlanningPortal.EFFIPLAN.weekStart(sunday.plusDays(7)).equals(sunday.plusDays(7)), "next Sunday starts a new Effiplan week");
+        check(PlanningPortal.EFFIPLAN.weekNumber(LocalDate.of(2026, 11, 29)) == 49, "Effiplan portal week 49 starts Sunday 29 November");
+        check(PlanningPortal.EFFIPLAN.weekNumber(LocalDate.of(2026, 12, 5)) == 49, "Effiplan Saturday 5 December remains week 49");
+        check(PlanningPortal.EPLANNING.weekNumber(LocalDate.of(2026, 11, 29)) == 48, "E-Planning keeps ISO Monday week number");
         check(PlanningPortal.EPLANNING.weekStart(sunday).equals(sunday.minusDays(6)), "Sunday still closes E-Planning's previous week");
+        check(EffiplanRules.queryEndExclusive(sunday.plusDays(6)).equals(sunday.plusDays(7)), "Effiplan Sunday–Saturday query includes the final Saturday");
+        check(EffiplanRules.queryEndExclusive(LocalDate.of(2026, 12, 31)).equals(LocalDate.of(2027, 1, 1)), "Effiplan exclusive end crosses year safely");
         LocalDate yearBoundary = LocalDate.of(2027, 1, 1);
         check(PlanningPortal.EFFIPLAN.weekStart(yearBoundary).equals(LocalDate.of(2026, 12, 27)), "Effiplan year boundary");
         check(PlanningPortal.EPLANNING.weekStart(yearBoundary).equals(LocalDate.of(2026, 12, 28)), "E-Planning year boundary unchanged");
+        check(PlanningPortal.EFFIPLAN.weekNumber(LocalDate.of(2027, 1, 1)) == 1, "Effiplan first partial Sunday week is week 1");
         check(PlanningPortal.EFFIPLAN.weekStart(LocalDate.of(2026, 11, 1)).equals(LocalDate.of(2026, 11, 1)), "month beginning Sunday has no extra leading week");
         check(PlanningPortal.EFFIPLAN.weekStart(LocalDate.of(2026, 10, 31)).plusDays(6).equals(LocalDate.of(2026, 10, 31)), "month ending Saturday has no extra trailing week");
         check(PlanningPortal.EPLANNING.calendarPreferences().equals("calendar-settings"), "keep previous calendar settings");

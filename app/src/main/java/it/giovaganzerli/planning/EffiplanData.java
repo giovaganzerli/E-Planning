@@ -23,6 +23,53 @@ final class EffiplanData {
     static JSONArray shifts(JSONObject content, LocalDate start, LocalDate end, String expectedUser) throws Exception {
         return shifts(content, start, end, expectedUser, new JSONObject().put("color", "POST_COLOR_POST"));
     }
+    static JSONArray personalPlanning(JSONObject content, LocalDate start, LocalDate end, String expectedUser, JSONObject display) throws Exception {
+        JSONArray result = shifts(content, start, end, expectedUser, display);
+        JSONArray persons = content.getJSONArray("persons");
+        JSONObject datas = content.optJSONObject("datas");
+        JSONObject reasons = datas == null ? null : datas.optJSONObject("reason");
+        for (int i = 0; i < persons.length(); i++) {
+            JSONObject person = persons.getJSONObject(i);
+            String id = person.getString("resource");
+            if (!expectedUser.equals(id) || person.optBoolean("hidden")) throw new Exception("Identità planning non corrispondente");
+            JSONObject events = person.getJSONObject("events");
+            for (String eventType : new String[] { "abs", "req" }) {
+                JSONArray absences = events.optJSONArray(eventType);
+                if (absences == null) continue;
+                boolean nonWorking = "req".equals(eventType);
+                for (int j = 0; j < absences.length(); j++) {
+                    JSONObject absence = absences.getJSONObject(j);
+                if (absence.optBoolean("disabled")) throw new Exception("Assenza riservata o non disponibile");
+                String code = absence.optString("reason", "Assenza"), title = code;
+                JSONObject metadata = reasons == null ? null : reasons.optJSONObject(code);
+                if (metadata != null && !metadata.optString("title").trim().isEmpty()) title = metadata.getString("title").trim();
+                JSONObject colors = metadata == null ? null : metadata.optJSONObject("colors");
+                JSONObject period = absence.optJSONObject("timePeriod");
+                if (period != null) {
+                    LocalDateTime from = EffiplanRules.time(period.getString("sdt")), to = EffiplanRules.time(period.getString("edt"));
+                    if (!to.isAfter(from) || from.toLocalDate().isBefore(start) || from.toLocalDate().isAfter(end)) continue;
+                    result.put(absenceShift(id, person, code, title, colors, from, to, false, nonWorking));
+                } else {
+                    JSONObject days = absence.optJSONObject("period");
+                    if (days == null || !days.has("sd") || !days.has("ed")) continue;
+                    LocalDate first = LocalDate.parse(days.getString("sd")), last = LocalDate.parse(days.getString("ed"));
+                    if (last.isBefore(first)) throw new Exception("Assenza giornaliera non valida");
+                    for (LocalDate date = first; !date.isAfter(last); date = date.plusDays(1))
+                        if (!date.isBefore(start) && !date.isAfter(end))
+                            result.put(absenceShift(id, person, code, title, colors, date.atStartOfDay(), date.plusDays(1).atStartOfDay(), true, true));
+                }
+                }
+            }
+        }
+        return result;
+    }
+    private static JSONObject absenceShift(String id, JSONObject person, String code, String title, JSONObject colors, LocalDateTime from, LocalDateTime to, boolean allDay, boolean nonWorking) throws Exception {
+        return new JSONObject().put("fromHour", from.toString()).put("toHour", to.toString()).put("date", from.toLocalDate().toString())
+            .put("absence", true).put("allDay", allDay).put("nonWorking", nonWorking).put("collaboratorUuid", id).put("collaborator", new JSONObject().put("uuid", id).put("name", person.optString("name", "")))
+            .put("hourTypology", new JSONObject().put("translation", title).put("code", code).put("abbreviation", "")
+                .put("color", EffiplanRules.color(colors == null ? "" : colors.optString("back"), "#7E22CE"))
+                .put("fontColor", EffiplanRules.color(colors == null ? "" : colors.optString("font"), "#FFFFFF")));
+    }
     static JSONArray shifts(JSONObject content, LocalDate start, LocalDate end, String expectedUser, JSONObject display) throws Exception {
         JSONArray persons = content.getJSONArray("persons"), shifts = new JSONArray();
         JSONObject postsData = content.optJSONObject("datas");

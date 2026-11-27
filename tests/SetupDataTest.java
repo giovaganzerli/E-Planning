@@ -13,6 +13,28 @@ public class SetupDataTest {
         throw new AssertionError(label);
     }
     public static void main(String[] args) throws Exception {
+        String globalUser = "00000000-0000-0000-0000-000000000010";
+        java.time.LocalDate globalDay = java.time.LocalDate.of(2026, 11, 27);
+        JSONObject globalPeriod = new JSONObject().put("collaboratorUuid", globalUser)
+            .put("fromHour", "2026-11-27T10:00:00").put("toHour", "2026-11-27T14:00:00")
+            .put("translation", "Vendita").put("hourTypologyColor", "#123456").put("hourTypologyUuid", "test-type");
+        JSONObject globalPerson = new JSONObject().put("collaboratorUuid", globalUser)
+            .put("collaboratorName", "Persona").put("collaboratorFirsLastName", "Test").put("periods", new JSONArray().put(globalPeriod));
+        JSONObject globalTeam = new JSONObject().put("teamName", "Squadra test")
+            .put("collaboratorsPlanningGlobalDto", new JSONArray().put(globalPerson));
+        JSONArray global = new JSONArray().put(globalTeam);
+        JSONObject selected = SetupData.eplanningGlobalDay(global, "Squadra test", globalDay);
+        check(selected.getJSONArray("shifts").length() == 1 && selected.getJSONObject("members").getString(globalUser).equals("Persona Test"), "global team read preserves members and shifts");
+        check(selected.getJSONArray("shifts").getJSONObject(0).getString("date").equals(globalDay.toString()), "global periods receive day for renderer");
+        check(selected.getJSONArray("shifts").getJSONObject(0).getJSONObject("hourTypology").getString("uuid").equals("test-type"), "global typology identifier preserved");
+        check(SetupData.eplanningGlobalDay(global, "Other", globalDay).getJSONArray("shifts").length() == 0, "missing team never widens to store");
+        check(SetupData.eplanningGlobalDay(global, null, globalDay).getJSONArray("shifts").length() == 1, "explicit store read includes all teams");
+        check(SetupData.eplanningGlobalDay(global, null, globalDay.plusDays(1)).getJSONArray("shifts").length() == 0, "global day bounds respected");
+        rejects(() -> SetupData.eplanningGlobalDay(new JSONArray().put(globalTeam).put(globalTeam), "Squadra test", globalDay), "ambiguous team names rejected");
+        check(SetupData.eplanningAuthorizationDenied(new JSONObject().put("exceptions", new JSONArray()
+            .put(new JSONObject().put("translationCode", "PROFILE_AUTHORIZATION_ERROR"))).toString()), "HTTP 400 profile restriction recognized");
+        check(!SetupData.eplanningAuthorizationDenied("{\"exceptions\":[]}"), "empty errors are not an authorization denial");
+        check(!SetupData.eplanningAuthorizationDenied("invalid"), "invalid response does not invent a permissions error");
         JSONArray sections = new JSONArray().put(new JSONObject().put("value", "new-team").put("title", "Squadra test"));
         JSONArray populations = EffiplanData.populations(sections, new JSONArray(), new JSONArray());
         List<SetupRules.Team> teams = SetupData.effiplanTeams(populations);

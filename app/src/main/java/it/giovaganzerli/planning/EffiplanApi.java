@@ -116,9 +116,18 @@ final class EffiplanApi {
         return EffiplanData.members(members);
     }
     JSONArray planning(LocalDate start, LocalDate end) throws Exception {
-        JSONObject request = eventsRequest("UFH", start, end, new JSONArray().put("pst")).put("rollNumber", new JSONArray().put(user));
-        JSONObject content = call("/v3/activities/events?roleId=" + encode(role), request);
-        return EffiplanData.shifts(content, start, end, user, postDisplay("UFH"));
+        LocalDate queryEnd = EffiplanRules.queryEndExclusive(end);
+        JSONObject primary = eventsRequest("UFH", start, queryEnd, new JSONArray().put("pst").put("abs")).put("rollNumber", new JSONArray().put(user));
+        JSONArray planning = EffiplanData.personalPlanning(call("/v3/activities/events?roleId=" + encode(role), primary), start, end, user, postDisplay("UFH"));
+        try {
+            JSONObject requests = eventsRequest("UFH", start, queryEnd, new JSONArray().put("req")).put("rollNumber", new JSONArray().put(user));
+            JSONArray requestItems = EffiplanData.personalPlanning(call("/v3/activities/events?roleId=" + encode(role), requests), start, end, user, postDisplay("UFH"));
+            for (int i = 0; i < requestItems.length(); i++) planning.put(requestItems.get(i));
+        } catch (AuthenticationException expired) { throw expired; }
+        catch (Exception unavailable) {
+            // Some authorized UFH models reject the optional request keyword: never hide the planning already read.
+        }
+        return planning;
     }
     JSONArray populations() throws Exception {
         JSONArray sections = call("/v2/settings/lists/types/SEH?roleId=" + encode(role), null).getJSONArray("SEH");
@@ -130,7 +139,7 @@ final class EffiplanApi {
         JSONObject group = verifiedMembership != null && verifiedMembership.key.equals(populationKey)
             ? ownGroup(verifiedMembership) : EffiplanData.population(populations(), populationKey);
         JSONObject display = postDisplay("UPC");
-        JSONObject request = eventsRequest("UPC", start, end, new JSONArray().put("pst").put("abs"))
+        JSONObject request = eventsRequest("UPC", start, EffiplanRules.queryEndExclusive(end), new JSONArray().put("pst").put("abs"))
             .put("valueDate", start.toString()).put("sortid", "").put("direction", "ASC")
             .put("loansDisplay", new JSONObject().put("showLent", true).put("showBorrowed", true))
             .put("restriType", group.getString("type")).put("restriValue", group.getString("value")).put("limit", 50);
@@ -160,6 +169,7 @@ final class EffiplanApi {
             offset += people.length();
         }
         return new JSONObject().put("members", allPersons).put("shifts", allShifts).put("blocks", allBlocks)
+            .put("dailyView", !"SEH".equals(group.optString("type")))
             .put("team", EffiplanData.populationKey(group.getString("type"), group.getString("value"))).put("populationTitle", group.getString("title"));
     }
     JSONObject attendance(LocalDate start, LocalDate end) throws Exception {

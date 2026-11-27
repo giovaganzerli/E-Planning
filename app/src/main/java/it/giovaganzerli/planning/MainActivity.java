@@ -17,6 +17,11 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.StyleSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
@@ -80,6 +85,9 @@ public class MainActivity extends Activity {
     private static final String SELECTED_CALENDAR_ID = "selected-calendar-id";
     private static final String SELECTED_CALENDAR_NAME = "selected-calendar-name";
     private static final String EVENT_MARKER = "E-PLANNING:";
+    private static final String TEAM_VIEW_PREFERENCES = "team-view";
+    private static final String TEAM_VIEW_DAY_MODE = "day-mode";
+    private static final String TEAM_VIEW_GROUPING = "grouping";
     private PlanningPortal planningPortal = PlanningPortal.EPLANNING;
     private EffiplanApi effiplan;
     private String effiplanPopulation = "OWN", effiplanPopulationTitle = "La mia squadra";
@@ -106,6 +114,9 @@ public class MainActivity extends Activity {
     private ImageButton appMenuButton, refreshButton, calendarSyncButton;
     private View appMenuBadge, updatesMenuBadge, updatesMenuItem;
     private TextView calendarSyncIndicator;
+    private ScrollView planningScroll;
+    private Spinner teamIntervalSelector, teamGroupingSelector;
+    private boolean syncingTeamControls;
     private boolean weekReady, calendarSyncing, planningReadable;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final ArrayList<Shift> shifts = new ArrayList<>();
@@ -143,7 +154,7 @@ public class MainActivity extends Activity {
         super.onCreate(state); setContentView(R.layout.activity_main);
         Window window = getWindow(); window.setStatusBarColor(Color.rgb(23, 37, 84));
         header = findViewById(R.id.header); bottomNavigation = findViewById(R.id.bottomNavigation);
-        portal = findViewById(R.id.portal); planningContainer = findViewById(R.id.planningContainer); weekList = findViewById(R.id.weekList);
+        portal = findViewById(R.id.portal); planningContainer = findViewById(R.id.planningContainer); weekList = findViewById(R.id.weekList); planningScroll = findViewById(R.id.planningScroll);
         status = findViewById(R.id.status); weekLabel = findViewById(R.id.weekLabel); weekSummary = findViewById(R.id.weekSummary); subtitle = findViewById(R.id.subtitle);
         refreshButton = findViewById(R.id.refresh); appMenuButton = findViewById(R.id.appMenu); previousButton = findViewById(R.id.previousPeriod); nextButton = findViewById(R.id.nextPeriod); todayButton = findViewById(R.id.today);
         appMenuBadge = findViewById(R.id.appMenuBadge);
@@ -153,6 +164,10 @@ public class MainActivity extends Activity {
         workday = new WorkdayController(this);
         findViewById(R.id.populationSelector).setOnClickListener(v -> chooseEffiplanPopulation());
         weekButton = findViewById(R.id.openWeek); monthButton = findViewById(R.id.openMonth); teamButton = findViewById(R.id.openTeam); searchButton = findViewById(R.id.openSearch);
+        findViewById(R.id.homeIcon).setOnClickListener(v -> openHome());
+        findViewById(R.id.title).setOnClickListener(v -> openHome());
+        restoreTeamView();
+        configureTeamControls();
         View root = findViewById(R.id.appRoot);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -166,6 +181,8 @@ public class MainActivity extends Activity {
         weekButton.setOnClickListener(v -> selectTab(Tab.WEEK)); monthButton.setOnClickListener(v -> selectTab(Tab.MONTH)); teamButton.setOnClickListener(v -> selectTab(Tab.TEAM));
         searchButton.setOnClickListener(v -> selectTab(Tab.SEARCH));
         findViewById(R.id.changeLoginPortal).setOnClickListener(v -> choosePlanningPortal(true));
+        stylePortalChoice(R.id.chooseEplanning, "E-Planning", PORTAL);
+        stylePortalChoice(R.id.chooseEffiplan, "Effiplan", BuildConfig.EFFIPLAN_ORIGIN);
         ((android.widget.RadioGroup) findViewById(R.id.portalChoices)).setOnCheckedChangeListener((group, checked) -> findViewById(R.id.confirmPortalChoice).setEnabled(checked != -1));
         findViewById(R.id.confirmPortalChoice).setOnClickListener(v -> confirmPlanningPortal());
         findViewById(R.id.cancelPortalChoice).setOnClickListener(v -> returnFromPortalChoice());
@@ -176,6 +193,20 @@ public class MainActivity extends Activity {
         if (savedPortal.isEmpty()) { portal.setVisibility(View.GONE); header.setVisibility(View.GONE); planningContainer.setVisibility(View.GONE); bottomNavigation.setVisibility(View.GONE); choosePlanningPortal(false); }
         else startPlanningPortal();
     }
+    private void stylePortalChoice(int id, String title, String url) {
+        String value = title + "\n" + url;
+        SpannableString styled = new SpannableString(value);
+        int start = title.length() + 1, end = value.length();
+        styled.setSpan(new ForegroundColorSpan(MUTED), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        styled.setSpan(new RelativeSizeSpan(.72f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        styled.setSpan(new StyleSpan(android.graphics.Typeface.ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        ((TextView) findViewById(id)).setText(styled);
+    }
+    private void openHome() {
+        if (!authenticated || configuringAccount || resolvingMembership) return;
+        currentWeek = weekStart(LocalDate.now());
+        selectTab(Tab.WEEK);
+    }
     @Override protected void onResume() { super.onResume(); if (updater != null) updater.resume(); if (workday != null) workday.resume(); }
     @Override protected void onPause() { if (workday != null) workday.pause(); if (updater != null) updater.pause(); super.onPause(); }
 
@@ -183,12 +214,24 @@ public class MainActivity extends Activity {
         portal.getSettings().setJavaScriptEnabled(true); portal.getSettings().setDomStorageEnabled(true);
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(portal, true);
         portal.setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView view, String url) { super.onPageFinished(view, url); if (!authenticated) checkForSession(); }
+            @Override public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                // The identity provider may land on any path of the authorised portal origin.
+                // Never wait for a specific portal home URL before acquiring the stored session.
+                if (!authenticated && isPortalUrl(url)) checkForSession();
+            }
         });
         portal.loadUrl(portalLoginUrl());
     }
     private String portalOrigin() { return planningPortal == PlanningPortal.EPLANNING ? PORTAL : BuildConfig.EFFIPLAN_ORIGIN; }
     private String portalLoginUrl() { return portalOrigin() + (planningPortal == PlanningPortal.EFFIPLAN ? "/webquartz/ux/home" : ""); }
+    private boolean isPortalUrl(String url) {
+        try {
+            android.net.Uri page = android.net.Uri.parse(url), expected = android.net.Uri.parse(portalOrigin());
+            return "https".equals(page.getScheme()) && expected.getHost() != null && expected.getHost().equalsIgnoreCase(page.getHost())
+                && expected.getPort() == page.getPort();
+        } catch (Exception ignored) { return false; }
+    }
     private void startPlanningPortal() {
         if (portalOrigin().isEmpty()) { choosePlanningPortal(false); return; }
         currentWeek = weekStart(LocalDate.now()); currentTeamWeek = currentWeek;
@@ -234,7 +277,7 @@ public class MainActivity extends Activity {
         if (destroyed || authenticated || clearingSession || selectingPortal) return;
         final int generation = authGeneration;
         String script = planningPortal == PlanningPortal.EPLANNING
-            ? "(function(){if(location.origin!==" + JSONObject.quote(portalOrigin()) + ")return '';for(let storage of [localStorage,sessionStorage]){let value=storage.getItem('auth.token');if(value){try{return JSON.parse(value)||''}catch(e){return value}}}return ''})()"
+            ? "(function(){if(location.origin!==" + JSONObject.quote(portalOrigin()) + ")return '';for(let storage of [localStorage,sessionStorage]){let value=storage.getItem('auth.token');if(!value)continue;try{let parsed=JSON.parse(value);value=typeof parsed==='string'?parsed:(parsed.token||parsed.accessToken||parsed.access_token||'')}catch(e){}if(typeof value==='string'&&value)return JSON.stringify({token:value})}return ''})()"
             : "(function(){if(location.origin!==" + JSONObject.quote(portalOrigin()) + ")return '';let token=localStorage.getItem('token'),role=localStorage.getItem('roleId'),user=localStorage.getItem('userId');return token&&role&&user?JSON.stringify({token:token,role:role,user:user}):''})()";
         portal.evaluateJavascript(script, result -> {
             if (destroyed || authenticated || clearingSession || selectingPortal || generation != authGeneration) return;
@@ -246,8 +289,8 @@ public class MainActivity extends Activity {
                     token = session.getString("token");
                 } catch (Exception ignored) { return; }
             } else {
-                if (!found.matches("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")) return;
-                token = found;
+                try { token = new JSONObject(found).getString("token"); } catch (Exception ignored) { return; }
+                if (!token.matches("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")) return;
             }
             authenticated = true;
             weekReady = false; workday.visible(false); weekList.removeAllViews();
@@ -276,7 +319,7 @@ public class MainActivity extends Activity {
         findViewById(R.id.loginPortalBar).setVisibility(View.GONE);
         authHandler.removeCallbacks(sessionPoll);
         header.setVisibility(View.VISIBLE); planningContainer.setVisibility(View.VISIBLE); bottomNavigation.setVisibility(View.VISIBLE); portal.setVisibility(View.GONE);
-        subtitle.setText("Il tuo planning, a colpo d’occhio");
+        subtitle.setText("Portale: " + planningPortal.label);
         if (updater != null) updater.setAccountReady(authenticated && !accountScope.isEmpty() && currentMembership != null && !resolvingMembership);
     }
     private void showAppMenu() {
@@ -353,7 +396,57 @@ public class MainActivity extends Activity {
         authHandler.postDelayed(finish, 1500);
     }
 
-    private void selectTab(Tab tab) { if (configuringAccount) { showSetupPage(); return; } if (resolvingMembership) return; currentTab = tab; updateNavigation(); loadCurrentTab(); }
+    private void selectTab(Tab tab) {
+        if (configuringAccount) { showSetupPage(); return; }
+        if (resolvingMembership) return;
+        if (tab == Tab.TEAM && currentTab != Tab.TEAM) openTeamToday();
+        currentTab = tab; updateNavigation(); loadCurrentTab();
+    }
+    private void openTeamToday() {
+        currentTeamDay = LocalDate.now();
+        currentTeamWeek = weekStart(currentTeamDay);
+    }
+    private void restoreTeamView() {
+        android.content.SharedPreferences preferences = getSharedPreferences(TEAM_VIEW_PREFERENCES, MODE_PRIVATE);
+        teamDayMode = false;
+        try { teamGrouping = TeamGrouping.valueOf(preferences.getString(TEAM_VIEW_GROUPING, TeamGrouping.DAY.name())); }
+        catch (Exception ignored) { teamGrouping = TeamGrouping.DAY; }
+    }
+    private void saveTeamView() {
+        getSharedPreferences(TEAM_VIEW_PREFERENCES, MODE_PRIVATE).edit()
+            .putBoolean(TEAM_VIEW_DAY_MODE, teamDayMode).putString(TEAM_VIEW_GROUPING, teamGrouping.name()).apply();
+    }
+    private void configureTeamControls() {
+        teamIntervalSelector = findViewById(R.id.teamIntervalSelector); teamGroupingSelector = findViewById(R.id.teamGroupingSelector);
+        ((View) teamIntervalSelector.getParent()).setVisibility(View.GONE);
+        ArrayAdapter<String> intervals = new ArrayAdapter<>(this, R.layout.team_spinner_item, new String[] { "Giorno ▾", "Settimana ▾" });
+        ArrayAdapter<String> groupings = new ArrayAdapter<>(this, R.layout.team_spinner_item, new String[] { "Per ora ▾", "Per collaboratore ▾", "Per giornata ▾" });
+        intervals.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); groupings.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        teamIntervalSelector.setAdapter(intervals); teamGroupingSelector.setAdapter(groupings); syncTeamControls();
+        teamIntervalSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (syncingTeamControls || teamDayMode == (position == 0)) return;
+                teamDayMode = position == 0; openTeamToday(); saveTeamView(); if (currentTab == Tab.TEAM) loadCurrentTab();
+            }
+        });
+        teamGroupingSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                TeamGrouping[] values = { TeamGrouping.DAY, TeamGrouping.COLLABORATOR, TeamGrouping.DAILY };
+                if (syncingTeamControls || teamGrouping == values[position]) return;
+                teamGrouping = values[position]; saveTeamView(); if (currentTab == Tab.TEAM) renderTeam(currentTeamWeek);
+            }
+        });
+    }
+    private void syncTeamControls() {
+        if (teamIntervalSelector == null) return;
+        syncingTeamControls = true;
+        teamIntervalSelector.setSelection(teamDayMode ? 0 : 1, false);
+        TeamGrouping[] values = { TeamGrouping.DAY, TeamGrouping.COLLABORATOR, TeamGrouping.DAILY };
+        for (int i = 0; i < values.length; i++) if (values[i] == teamGrouping) teamGroupingSelector.setSelection(i, false);
+        syncingTeamControls = false;
+    }
     private void movePeriod(int direction) {
         if (currentTab == Tab.SEARCH) { searchDay = searchDay.plusWeeks(direction); searchSelectedShifts.clear(); loadCurrentTab(); return; }
         if (currentTab == Tab.MONTH) currentMonth = currentMonth.plusMonths(direction);
@@ -366,6 +459,8 @@ public class MainActivity extends Activity {
         findViewById(R.id.periodSummary).setVisibility(currentTab == Tab.SETTINGS ? View.GONE : View.VISIBLE);
         punchPreview.setVisibility(currentTab == Tab.WEEK ? View.VISIBLE : View.GONE);
         workday.visible(currentTab == Tab.WEEK);
+        findViewById(R.id.teamControls).setVisibility(currentTab == Tab.TEAM ? View.VISIBLE : View.GONE);
+        if (currentTab == Tab.TEAM) syncTeamControls();
         updatePopulationSelector();
         Button[] buttons = { weekButton, monthButton, teamButton, searchButton };
         Tab[] tabs = { Tab.WEEK, Tab.MONTH, Tab.TEAM, Tab.SEARCH };
@@ -673,7 +768,22 @@ public class MainActivity extends Activity {
         });
     }
     private boolean validUuid(String uuid) { return uuid.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"); }
-    private void showLoadError(String message) { refreshButton.setEnabled(true); status.setText(message); status.setTextColor(Color.WHITE); status.setVisibility(View.VISIBLE); }
+    private void showLoadError(String message) {
+        refreshButton.setEnabled(true); status.setVisibility(View.GONE); weekList.removeAllViews();
+        LinearLayout error = new LinearLayout(this); error.setOrientation(LinearLayout.VERTICAL); error.setGravity(Gravity.CENTER);
+        error.setPadding(dp(28), dp(40), dp(28), dp(40)); error.setBackgroundResource(R.drawable.bg_error_card);
+        TextView title = text("Non riesco a caricare il planning", 20, Color.rgb(153, 27, 27), true); title.setGravity(Gravity.CENTER); error.addView(title);
+        TextView description = text(message, 14, Color.rgb(127, 29, 29), false); description.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(-1, -2); descriptionParams.topMargin = dp(10); error.addView(description, descriptionParams);
+        Button retry = compactButton("Riprova"); retry.setAllCaps(false); retry.setTextColor(Color.WHITE); retry.setBackgroundResource(R.drawable.bg_error_retry);
+        LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(-1, dp(48)); retryParams.topMargin = dp(22); error.addView(retry, retryParams);
+        retry.setOnClickListener(v -> loadCurrentTab());
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2); cardParams.topMargin = dp(8); weekList.addView(error, cardParams);
+        weekList.post(() -> {
+            View parent = (View) weekList.getParent();
+            if (weekList.getChildCount() == 1 && parent != null) error.setMinimumHeight(Math.max(dp(260), parent.getHeight() - dp(24)));
+        });
+    }
 
     private void loadWeek() {
         status.setText("Aggiornamento planning settimanale…");
@@ -682,9 +792,9 @@ public class MainActivity extends Activity {
             requestEffiplan(api -> api.planning(start, start.plusDays(6)).toString(), raw -> { parseShifts(raw); renderWeek(); complete("Planning Effiplan aggiornato"); });
             return;
         }
-        LocalDate thisWeek = weekStart(LocalDate.now());
-        if (currentWeek.equals(thisWeek)) request(WEEKLY_API, raw -> { parseShifts(raw); renderWeek(); complete("Planning settimanale aggiornato"); });
-        else loadWeekFromMonths(false);
+        // The E‑Planning weekly endpoint only exposes remaining shifts of the current week.
+        // The monthly endpoint is complete, so use it for every personal weekly view.
+        loadWeekFromMonths(false);
     }
     private void loadWeekFromMonths(boolean secondMonth) {
         LocalDate month = secondMonth ? currentWeek.plusDays(6).withDayOfMonth(1) : currentWeek.withDayOfMonth(1);
@@ -708,16 +818,32 @@ public class MainActivity extends Activity {
     }
 
     private void loadTeam() {
+        if (planningPortal == PlanningPortal.EPLANNING) teamDayMode = "STORE".equals(effiplanPopulation);
         teamUuid = "OWN".equals(effiplanPopulation) ? ownTeamKey() : effiplanPopulation;
         if (planningPortal == PlanningPortal.EFFIPLAN) {
             loadEffiplanTeam(currentTeamWeek, currentTeamWeek.plusWeeks(teamWeekCount).minusDays(1), false, false); return;
         }
         if (teamUuid.isEmpty()) { showLoadError("Nessuna squadra associata al tuo profilo ePlanning."); return; }
-        status.setText("Caricamento collaboratori della squadra…");
-        String date = currentTeamWeek.toString();
-        String membersUrl = TEAM_MEMBERS_API + "?filter[teamUuid]=" + teamUuid + "&filter[startDateInterval]=" + date + "&filter[withPolyvalences]=true";
-        request(membersUrl, membersRaw -> {
-            parseCollaborators(membersRaw); shifts.clear(); status.setText("Aggiornamento planning squadra…"); loadTeamWeeks(0);
+        if (profilePersonnelDivision.isEmpty()) { showLoadError("Negozio non disponibile nel profilo E‑Planning."); return; }
+        String selectedTeam = teamDayMode ? null : "OWN".equals(effiplanPopulation) ? ownTeamTitle() : effiplanPopulationTitle;
+        loadGlobalTeamDay(teamDayMode ? currentTeamDay : currentTeamWeek, teamDayMode ? 1 : 7, 0, selectedTeam);
+    }
+    private void loadGlobalTeamDay(LocalDate start, int count, int index, String selectedTeam) {
+        if (index >= count) {
+            deduplicateShifts(); shifts.sort(Comparator.comparing(s -> s.from)); renderTeam(currentTeamWeek); complete("Planning squadra aggiornato"); return;
+        }
+        LocalDate day = start.plusDays(index);
+        status.setText("Caricamento planning globale…");
+        String endpoint = API + "planning/planningGlobalByCollaboratorProfile?filter[personnelDivision]="
+            + android.net.Uri.encode(profilePersonnelDivision) + "&filter[date]=" + day;
+        request(endpoint, raw -> {
+            try {
+                JSONObject data = SetupData.eplanningGlobalDay(new JSONArray(raw), selectedTeam, day);
+                JSONObject members = data.getJSONObject("members");
+                Iterator<String> ids = members.keys(); while (ids.hasNext()) { String id = ids.next(); collaborators.put(id, members.getString(id)); }
+                collectShifts(data.getJSONArray("shifts"));
+            } catch (Exception invalid) { showLoadError("Planning globale della squadra non leggibile."); return; }
+            loadGlobalTeamDay(start, count, index + 1, selectedTeam);
         });
     }
     private void loadTeamWeeks(int index) {
@@ -778,6 +904,7 @@ public class MainActivity extends Activity {
         requestEffiplan(api -> api.team(start, end, search, population).toString(), raw -> {
             try {
                 JSONObject data = new JSONObject(raw);
+                if (!search && !settings) teamDayMode = data.optBoolean("dailyView");
                 teamUuid = data.getString("team");
                 if (!search && !settings) effiplanPopulationTitle = data.getString("populationTitle");
                 updatePopulationSelector();
@@ -821,7 +948,7 @@ public class MainActivity extends Activity {
     private void updatePopulationSelector() {
         Button selector = findViewById(R.id.populationSelector);
         selector.setVisibility(authenticated && currentTab == Tab.TEAM ? View.VISIBLE : View.GONE);
-        selector.setText("Popolazione · " + effiplanPopulationTitle + "  ▾");
+        selector.setText(effiplanPopulationTitle + "  ▾");
         selector.setContentDescription("Cambia popolazione. Attuale: " + effiplanPopulationTitle);
     }
     private void chooseEffiplanPopulation() {
@@ -854,6 +981,8 @@ public class MainActivity extends Activity {
                     row.setOnClickListener(v -> {
                         if (destroyed || !authenticated || generation != requestGeneration) { dialog.dismiss(); return; }
                         effiplanPopulation = key; effiplanPopulationTitle = title;
+                        teamDayMode = planningPortal == PlanningPortal.EPLANNING ? key.equals("STORE") : !key.equals("OWN") && !key.startsWith("SEH:");
+                        openTeamToday();
                         teamUuid = ""; shifts.clear(); collaborators.clear(); effiplanAbsences.clear(); searchSelectedShifts.clear();
                         dialog.dismiss(); updatePopulationSelector(); loadCurrentTab();
                     });
@@ -875,6 +1004,7 @@ public class MainActivity extends Activity {
         else loadBrowseTeams(teams -> {
             JSONArray choices = new JSONArray();
             try {
+                choices.put(new JSONObject().put("key", "STORE").put("title", "Tutto il negozio"));
                 for (SetupRules.Team team : teams) if (!team.key.equals(ownTeamKey()))
                     choices.put(new JSONObject().put("key", team.key).put("title", team.title));
                 showChoices.accept(choices.toString());
@@ -1051,10 +1181,16 @@ public class MainActivity extends Activity {
             connection.setRequestProperty("Authorization", "Bearer " + requestToken); connection.setRequestProperty("Accept", "application/json");
             connection.setConnectTimeout(15000); connection.setReadTimeout(15000);
             int code = connection.getResponseCode(); String body = read(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
+            if (code >= 400) {
+                String stage = endpoint.startsWith(TEAM_MEMBERS_API) || endpoint.contains("/getCollaboratorsByTeam/") ? "componenti squadra"
+                    : endpoint.startsWith(MONTHLY_API) ? "planning mensile" : "planning";
+                android.util.Log.w("PlanningRead", stage + ": HTTP " + code);
+            }
             runOnUiThread(() -> {
                 if (destroyed || generation != requestGeneration || !authenticated) return;
                 if (code >= 200 && code < 300) handler.handle(body);
                 else if (code == 401) clearSession();
+                else if (SetupData.eplanningAuthorizationDenied(body)) showLoadError("Il tuo profilo E‑Planning non è autorizzato a consultare questa squadra. Il portale consente di leggere solo la squadra di appartenenza. Seleziona la tua squadra oppure chiedi al referente del portale di verificare i permessi.");
                 else if (code == 403) showLoadError("Il portale non autorizza la lettura della squadra selezionata. Rivedi la squadra nelle Impostazioni.");
                 else showLoadError("Impossibile aggiornare il planning (" + code + ").");
             });
@@ -1098,7 +1234,7 @@ public class MainActivity extends Activity {
     private void complete(String message) { refreshButton.setEnabled(true); status.setText(message + " · dati solo sul tuo dispositivo"); }
     private void renderWeek() {
         weekList.removeAllViews(); weekLabel.setText("W" + weekNumber(currentWeek) + " · " + shortRange(currentWeek));
-        ArrayList<Shift> visible = shiftsInPeriod(currentWeek, currentWeek.plusDays(6)); long minutes = 0; for (Shift shift : visible) minutes += Duration.between(shift.from, shift.to).toMinutes(); weekSummary.setText(visible.size() + " turni · " + hours(minutes));
+        ArrayList<Shift> visible = shiftsInPeriod(currentWeek, currentWeek.plusDays(6)); long minutes = workMinutes(visible); weekSummary.setText(visible.size() + " voci · " + hours(minutes));
         weekReady = planningReadable; updateCalendarSyncIndicator();
         Map<LocalDate, ArrayList<Shift>> byDay = shiftsByDay();
         for (int i = 0; i < 7; i++) {
@@ -1513,12 +1649,12 @@ public class MainActivity extends Activity {
         LinearLayout details = new LinearLayout(this); details.setOrientation(LinearLayout.VERTICAL); long minutes = 0;
         if (list == null || list.isEmpty()) details.addView(text(noShiftLabel(), 14, MUTED, false));
         else for (Shift shift : list) {
-            minutes += Duration.between(shift.from, shift.to).toMinutes();
+            if (!shift.nonWorking && !shift.allDay) minutes += Duration.between(shift.from, shift.to).toMinutes();
             LinearLayout line = new LinearLayout(this); line.setGravity(Gravity.CENTER_VERTICAL);
             line.setPadding(dp(8), dp(5), dp(8), dp(5));
             GradientDrawable background = new GradientDrawable(); background.setColor(shift.color); background.setCornerRadius(dp(8)); line.setBackground(background);
             int foreground = shiftForeground(shift);
-            TextView times = text(shift.from.toLocalTime() + " – " + shift.to.toLocalTime(), 14, foreground, true);
+            TextView times = text(shift.timeLabel(), 14, foreground, true);
             line.addView(times, new LinearLayout.LayoutParams(0, -2, 1));
             TextView type = text(shift.typeLabel(), 11, foreground, true);
             type.setMaxWidth(dp(90)); line.addView(type);
@@ -1529,8 +1665,8 @@ public class MainActivity extends Activity {
     }
     private void renderMonth() {
         weekList.removeAllViews(); weekLabel.setText(capitalize(currentMonth.format(monthFormat)));
-        long minutes = 0; for (Shift shift : shifts) minutes += Duration.between(shift.from, shift.to).toMinutes();
-        weekSummary.setText(shifts.size() + " turni · " + hours(minutes));
+        long minutes = workMinutes(shifts);
+        weekSummary.setText(shifts.size() + " voci · " + hours(minutes));
         Map<LocalDate, ArrayList<Shift>> byDay = shiftsByDay();
         LocalDate cursor = weekStart(currentMonth);
         LocalDate end = weekStart(currentMonth.plusMonths(1).minusDays(1)).plusDays(6);
@@ -1544,7 +1680,6 @@ public class MainActivity extends Activity {
         ArrayList<Shift> visible = shiftsInPeriod(monday, monday.plusDays(6)); long minutes = 0;
         for (Shift shift : visible) minutes += Duration.between(shift.from, shift.to).toMinutes();
         weekSummary.setText(visible.size() + " turni · " + hours(minutes));
-        weekList.addView(teamOptions());
         for (int i = 0; i < 7; i++) {
             LocalDate day = monday.plusDays(i); ArrayList<Shift> daily = shiftsInPeriod(day, day);
             TeamChart chart = new TeamChart(day, daily, teamGrouping);
@@ -1552,17 +1687,27 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, Math.max(dp(360), teamChartMinHeight(daily))); p.bottomMargin = dp(12);
             weekList.addView(scrollChart(chart, daily, teamGrouping), p);
         }
+        scrollTeamWeekToToday(monday);
+    }
+    private void scrollTeamWeekToToday(LocalDate start) {
+        LocalDate today = LocalDate.now();
+        if (today.isBefore(start) || today.isAfter(start.plusDays(6))) return;
+        int index = (int) java.time.temporal.ChronoUnit.DAYS.between(start, today);
+        planningScroll.post(() -> {
+            if (currentTab != Tab.TEAM || teamDayMode || weekList.getChildCount() <= index) return;
+            planningScroll.scrollTo(0, weekList.getChildAt(index).getTop());
+        });
     }
     private void renderPeriod(LocalDate start, LocalDate end, String title, boolean showWeekDividers) {
         weekList.removeAllViews(); weekLabel.setText(title);
         ArrayList<Shift> visible = shiftsInPeriod(start, end); long minutes = 0; for (Shift shift : visible) minutes += Duration.between(shift.from, shift.to).toMinutes();
         weekSummary.setText(visible.size() + (visible.size() == 1 ? " turno" : " turni") + " · " + hours(minutes));
         Map<LocalDate, ArrayList<Shift>> byDay = shiftsByDay();
-        if (currentTab == Tab.TEAM) weekList.addView(teamOptions());
         for (LocalDate day = start; !day.isAfter(end); day = day.plusDays(1)) { if (showWeekDividers && day.getDayOfWeek() == planningPortal.firstDay()) weekList.addView(weekDivider(day)); weekList.addView(dayCard(day, byDay.get(day))); }
     }
     private Map<LocalDate, ArrayList<Shift>> shiftsByDay() { Map<LocalDate, ArrayList<Shift>> byDay = new HashMap<>(); for (Shift shift : shifts) byDay.computeIfAbsent(shift.date, ignored -> new ArrayList<>()).add(shift); return byDay; }
     private ArrayList<Shift> shiftsInPeriod(LocalDate start, LocalDate end) { ArrayList<Shift> result = new ArrayList<>(); for (Shift shift : shifts) if (!shift.date.isBefore(start) && !shift.date.isAfter(end)) result.add(shift); return result; }
+    private long workMinutes(List<Shift> list) { long minutes = 0; for (Shift shift : list) if (!shift.nonWorking && !shift.allDay) minutes += Duration.between(shift.from, shift.to).toMinutes(); return minutes; }
     private void renderEmpty(String headline, String body) { weekLabel.setText("Il tuo planning"); weekSummary.setText("Accedi al portale per vedere i turni"); weekList.removeAllViews(); weekList.addView(empty(headline, body)); }
     private View dayCard(LocalDate day, ArrayList<Shift> list) {
         LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL); card.setBackgroundResource(day.equals(LocalDate.now()) ? R.drawable.bg_day_current : R.drawable.bg_day); card.setPadding(dp(16), dp(12), dp(16), dp(12));
@@ -1571,15 +1716,15 @@ public class MainActivity extends Activity {
         TextView dayName = text(day.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ITALIAN), 15, INK, true); dayName.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
         headerRow.addView(dayName); headerRow.addView(text(day.format(dateFormat), 13, MUTED, false)); card.addView(headerRow);
         if (list == null || list.isEmpty()) { TextView rest = text(noShiftLabel(), 13, MUTED, false); LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.topMargin = dp(7); rest.setLayoutParams(p); card.addView(rest); return card; }
-        long mins = 0; for (Shift shift : list) { mins += Duration.between(shift.from, shift.to).toMinutes(); card.addView(shiftRow(shift)); }
-        TextView total = text(hours(mins), 12, MUTED, true); LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.topMargin = dp(7); total.setLayoutParams(p); card.addView(total); return card;
+        long mins = 0; for (Shift shift : list) { if (!shift.nonWorking && !shift.allDay) mins += Duration.between(shift.from, shift.to).toMinutes(); card.addView(shiftRow(shift)); }
+        if (mins > 0) { TextView total = text(hours(mins), 12, MUTED, true); LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.topMargin = dp(7); total.setLayoutParams(p); card.addView(total); } return card;
     }
     private View shiftRow(Shift shift) {
         LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(dp(10), dp(8), dp(10), dp(8));
         boolean officialPalette = planningPortal == PlanningPortal.EFFIPLAN;
         GradientDrawable bg = new GradientDrawable(); bg.setColor(officialPalette ? shift.color : lighten(shift.color, .88f)); bg.setCornerRadius(dp(12)); bg.setStroke(dp(1), shift.color); row.setBackground(bg);
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2); rp.topMargin = dp(7); row.setLayoutParams(rp);
-        TextView time = text(shift.from.toLocalTime().toString() + " – " + shift.to.toLocalTime().toString(), 14, officialPalette ? shiftForeground(shift) : INK, true); time.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
+        TextView time = text(shift.timeLabel(), 14, officialPalette ? shiftForeground(shift) : INK, true); time.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
         row.addView(time); row.addView(text(shift.label(), 12, officialPalette ? shiftForeground(shift) : shift.color, true)); return row;
     }
     private View weekDivider(LocalDate monday) {
@@ -1594,7 +1739,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < 2; i++) {
             final boolean day = i == 0;
             Button button = optionButton(day ? "Giorno" : "Settimana", teamDayMode == day);
-            button.setOnClickListener(v -> { teamDayMode = day; if (day && (currentTeamDay.isBefore(currentTeamWeek) || currentTeamDay.isAfter(currentTeamWeek.plusDays(6)))) currentTeamDay = currentTeamWeek; renderTeam(currentTeamWeek); });
+            button.setOnClickListener(v -> { teamDayMode = day; openTeamToday(); saveTeamView(); loadCurrentTab(); });
             periods.addView(button, optionParams());
         }
         panel.addView(periods); TextView label = text("RAGGRUPPAMENTO", 10, MUTED, true); label.setPadding(0, dp(7), 0, 0); panel.addView(label);
@@ -1603,7 +1748,7 @@ public class MainActivity extends Activity {
         String[] titles = { "Per ora", "Per collaboratore", "Per giornata" };
         for (int i = 0; i < values.length; i++) {
             final TeamGrouping value = values[i]; Button button = optionButton(titles[i], value == teamGrouping);
-            button.setOnClickListener(v -> { teamGrouping = value; renderTeam(currentTeamWeek); }); groups.addView(button, optionParams());
+            button.setOnClickListener(v -> { teamGrouping = value; saveTeamView(); renderTeam(currentTeamWeek); }); groups.addView(button, optionParams());
         }
         panel.addView(groups); return panel;
     }
@@ -1637,11 +1782,10 @@ public class MainActivity extends Activity {
     private void renderTeamDay(LocalDate day) {
         weekList.removeAllViews(); weekLabel.setText("W" + weekNumber(day) + " · " + day.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ITALIAN).toUpperCase() + " " + day.format(dateFormat).toUpperCase());
         ArrayList<Shift> today = new ArrayList<>(); for (Shift shift : shifts) if (shift.date.equals(day)) today.add(shift); long minutes = 0; for (Shift shift : today) minutes += Duration.between(shift.from, shift.to).toMinutes(); weekSummary.setText(today.size() + " turni · " + hours(minutes));
-        weekList.addView(teamOptions()); TeamChart chart = new TeamChart(day, today, teamGrouping); chart.setBackgroundResource(day.equals(LocalDate.now()) ? R.drawable.bg_day_current : R.drawable.bg_day); LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(390)); HorizontalScrollView viewport = scrollChart(chart, today, teamGrouping); weekList.addView(viewport, p);
+        TeamChart chart = new TeamChart(day, today, teamGrouping); chart.setBackgroundResource(day.equals(LocalDate.now()) ? R.drawable.bg_day_current : R.drawable.bg_day); LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(390)); HorizontalScrollView viewport = scrollChart(chart, today, teamGrouping); weekList.addView(viewport, p);
         weekList.post(() -> {
             if (currentTab != Tab.TEAM || !teamDayMode || viewport.getParent() != weekList) return;
-            View controls = weekList.getChildAt(0);
-            int available = ((View) weekList.getParent()).getHeight() - weekList.getPaddingTop() - weekList.getPaddingBottom() - controls.getHeight() - dp(10);
+            int available = ((View) weekList.getParent()).getHeight() - weekList.getPaddingTop() - weekList.getPaddingBottom();
             viewport.getLayoutParams().height = Math.max(teamChartMinHeight(today), available); viewport.requestLayout();
         });
     }
@@ -1650,24 +1794,40 @@ public class MainActivity extends Activity {
         LocalDate end = teamDayMode ? start : start.plusDays(6); ArrayList<Shift> visible = shiftsInPeriod(start, end);
         weekLabel.setText("W" + weekNumber(start) + (teamDayMode ? " · " + start.format(dateFormat).toUpperCase() : ""));
         long minutes = 0; for (Shift shift : visible) minutes += Duration.between(shift.from, shift.to).toMinutes(); weekSummary.setText(visible.size() + " turni · " + hours(minutes));
-        weekList.addView(teamOptions());
         DailyTimeline chart = new DailyTimeline(start, teamDayMode ? 1 : 7);
         chart.setMinimumWidth(dp(1400)); chart.setBackgroundResource(R.drawable.bg_day); HorizontalScrollView scroll = new HorizontalScrollView(this); scroll.setFillViewport(true);
         scroll.addView(chart, new android.widget.FrameLayout.LayoutParams(dp(1400), -1));
         weekList.addView(scroll, new LinearLayout.LayoutParams(-1, chart.contentHeight));
         weekList.post(() -> {
             if (currentTab != Tab.TEAM || teamGrouping != TeamGrouping.DAILY || scroll.getParent() != weekList) return;
-            int available = ((View) weekList.getParent()).getHeight() - weekList.getPaddingBottom() - weekList.getChildAt(0).getHeight() - dp(10);
+            int available = ((View) weekList.getParent()).getHeight() - weekList.getPaddingBottom();
             scroll.getLayoutParams().height = Math.max(chart.contentHeight, available); scroll.requestLayout();
         });
     }
-    private class DailyTimeline extends View {
+    private abstract class StickyAxesChart extends View {
+        private final ArrayList<Runnable> axisLabels = new ArrayList<>();
+        private final android.view.ViewTreeObserver.OnScrollChangedListener scrollListener = this::invalidate;
+        StickyAxesChart() { super(MainActivity.this); }
+        @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); getViewTreeObserver().addOnScrollChangedListener(scrollListener); }
+        @Override protected void onDetachedFromWindow() { getViewTreeObserver().removeOnScrollChangedListener(scrollListener); super.onDetachedFromWindow(); }
+        void beginAxes() { axisLabels.clear(); }
+        void axisLabel(Canvas canvas, String label, float x, float y, Paint source, boolean horizontal) {
+            Paint labelPaint = new Paint(source);
+            android.graphics.Rect visible = new android.graphics.Rect();
+            getLocalVisibleRect(visible);
+            float targetX = horizontal ? x : x + visible.left;
+            float targetY = horizontal ? Math.max(y, visible.top + y) : y;
+            axisLabels.add(() -> canvas.drawText(label, targetX, targetY, labelPaint));
+        }
+        void endAxes() { for (Runnable draw : axisLabels) draw.run(); }
+    }
+    private class DailyTimeline extends StickyAxesChart {
         private final LocalDate start; private final int days; private final Paint paint = new Paint(1);
         private final ArrayList<ArrayList<ArrayList<Shift>>> lanesByDay = new ArrayList<>();
         private int axisStart = 24 * 60, axisEnd = 0;
         final int contentHeight;
         DailyTimeline(LocalDate start, int days) {
-            super(MainActivity.this); this.start = start; this.days = days; int height = dp(48);
+            super(); this.start = start; this.days = days; int height = dp(48);
             for (int d = 0; d < days; d++) {
                 ArrayList<Shift> daily = shiftsInPeriod(start.plusDays(d), start.plusDays(d)); daily.sort(Comparator.comparing((Shift s) -> !isOwnShift(s)).thenComparing(s -> s.from));
                 ArrayList<ArrayList<Shift>> lanes = new ArrayList<>();
@@ -1685,16 +1845,16 @@ public class MainActivity extends Activity {
             contentHeight = height;
         }
         @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas); float left = dp(116), top = dp(42), unit = (getWidth() - left - dp(20)) / (axisEnd - axisStart);
+            super.onDraw(canvas); beginAxes(); float left = dp(116), top = dp(42), unit = (getWidth() - left - dp(20)) / (axisEnd - axisStart);
             paint.setTypeface(android.graphics.Typeface.DEFAULT); paint.setTextSize(dp(11));
-            for (int hour = axisStart / 60; hour <= axisEnd / 60; hour++) { float x = left + (hour * 60 - axisStart) * unit; paint.setColor(Color.rgb(226,232,240)); canvas.drawLine(x, top, x, getHeight() - dp(10), paint); paint.setColor(MUTED); canvas.drawText(String.format(Locale.ITALIAN, "%02d:00", hour % 24), x, dp(23), paint); }
+            for (int hour = axisStart / 60; hour <= axisEnd / 60; hour++) { float x = left + (hour * 60 - axisStart) * unit; paint.setColor(Color.rgb(226,232,240)); canvas.drawLine(x, top, x, getHeight() - dp(10), paint); paint.setColor(MUTED); axisLabel(canvas, String.format(Locale.ITALIAN, "%02d:00", hour % 24), x, dp(23), paint, true); }
             float y = top; float extra = Math.max(0, getHeight() - contentHeight) / (float) days;
             for (int d = 0; d < days; d++) {
                 LocalDate day = start.plusDays(d); ArrayList<ArrayList<Shift>> lanes = lanesByDay.get(d); float height = dp(Math.max(1, lanes.size()) * 44 + 60) + extra;
                 if (day.equals(LocalDate.now())) { paint.setColor(Color.rgb(239,246,255)); canvas.drawRect(0, y, getWidth(), y + height, paint); }
                 paint.setColor(day.equals(LocalDate.now()) ? NAVY : INK); paint.setTextSize(dp(13)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-                canvas.drawText(day.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ITALIAN).toUpperCase() + " " + day.format(dateFormat), dp(10), y + dp(23), paint);
-                if (day.equals(LocalDate.now())) { paint.setTextSize(dp(10)); canvas.drawText("OGGI", dp(10), y + dp(40), paint); }
+                axisLabel(canvas, day.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ITALIAN).toUpperCase() + " " + day.format(dateFormat), dp(10), y + dp(23), paint, false);
+                if (day.equals(LocalDate.now())) { paint.setTextSize(dp(10)); axisLabel(canvas, "OGGI", dp(10), y + dp(40), paint, false); }
                 for (int lane = 0; lane < lanes.size(); lane++) if (isOwnShift(lanes.get(lane).get(0))) highlightOwnBand(canvas, paint, new RectF(left, y + dp(3 + lane * 44), getWidth(), y + dp(47 + lane * 44)));
                 for (int lane = 0; lane < lanes.size(); lane++) for (Shift shift : lanes.get(lane)) {
                     float x = left + (shift.from.getHour() * 60 + shift.from.getMinute() - axisStart) * unit;
@@ -1710,38 +1870,40 @@ public class MainActivity extends Activity {
                 if (lanes.isEmpty()) canvas.drawText("Nessun turno pianificato", left, y + dp(23), paint);
                 paint.setColor(Color.rgb(203,213,225)); canvas.drawLine(0, y + height, getWidth(), y + height, paint); y += height;
             }
+            endAxes();
         }
     }
-    private class TeamChart extends View {
+    private class TeamChart extends StickyAxesChart {
         private final LocalDate day; private final ArrayList<Shift> data; private final TeamGrouping grouping; private final Paint paint = new Paint(1);
-        TeamChart(LocalDate day, ArrayList<Shift> data, TeamGrouping grouping) { super(MainActivity.this); this.day = day; this.data = data; this.grouping = grouping; paint.setTypeface(android.graphics.Typeface.create("sans", android.graphics.Typeface.NORMAL)); }
+        TeamChart(LocalDate day, ArrayList<Shift> data, TeamGrouping grouping) { super(); this.day = day; this.data = data; this.grouping = grouping; paint.setTypeface(android.graphics.Typeface.create("sans", android.graphics.Typeface.NORMAL)); }
         @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas); int w = getWidth(), h = getHeight(); float left = dp(grouping == TeamGrouping.DAY ? 48 : 96), top = dp(60), bottom = h - dp(16); int start = 7 * 60, end = 21 * 60;
-            paint.setColor(INK); paint.setTextSize(dp(16)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); canvas.drawText(day.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ITALIAN) + " " + day.format(dateFormat), dp(16), dp(24), paint);
+            super.onDraw(canvas); beginAxes(); int w = getWidth(), h = getHeight(); float left = dp(grouping == TeamGrouping.DAY ? 48 : 96), top = dp(60), bottom = h - dp(16); int start = 7 * 60, end = 21 * 60;
+            paint.setColor(INK); paint.setTextSize(dp(16)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); axisLabel(canvas, day.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ITALIAN) + " " + day.format(dateFormat), dp(16), dp(24), paint, false);
             ArrayList<String> people = teamPeople(data);
-            if (people.isEmpty()) { paint.setColor(MUTED); paint.setTextSize(dp(14)); canvas.drawText("Nessun turno pianificato", dp(16), dp(70), paint); return; }
+            if (people.isEmpty()) { paint.setColor(MUTED); paint.setTextSize(dp(14)); canvas.drawText("Nessun turno pianificato", dp(16), dp(70), paint); endAxes(); return; }
             if (grouping == TeamGrouping.DAY) drawByTime(canvas, people, left, top, w - dp(10), bottom, start, end); else drawByPerson(canvas, people, left, top, w - dp(10), bottom, start, end);
+            endAxes();
         }
         private void drawByTime(Canvas canvas, ArrayList<String> people, float left, float top, float right, float bottom, int start, int end) {
             float columnWidth = (right - left) / people.size();
             for (int i = 0; i < people.size(); i++) if (isOwnName(people.get(i))) highlightOwnBand(canvas, paint, new RectF(left + i * columnWidth, top - dp(34), left + (i + 1) * columnWidth, bottom));
-            float lane = (right - left) / people.size(); for (int hour = start / 60; hour <= end / 60; hour++) { float y = top + (hour * 60 - start) * (bottom - top) / (end - start); paint.setColor(Color.rgb(203,213,225)); paint.setStrokeWidth(1); canvas.drawLine(left, y, right, y, paint); paint.setColor(MUTED); paint.setTextSize(dp(10)); canvas.drawText(hour + ":00", dp(4), y + dp(3), paint); }
+            float lane = (right - left) / people.size(); for (int hour = start / 60; hour <= end / 60; hour++) { float y = top + (hour * 60 - start) * (bottom - top) / (end - start); paint.setColor(Color.rgb(203,213,225)); paint.setStrokeWidth(1); canvas.drawLine(left, y, right, y, paint); paint.setColor(MUTED); paint.setTextSize(dp(10)); axisLabel(canvas, hour + ":00", dp(4), y + dp(3), paint, false); }
             for (int i = 0; i < people.size(); i++) {
                 String name = people.get(i); String[] parts = name.split(" ", 2);
                 paint.setColor(isOwnName(name) ? NAVY : MUTED); paint.setTextSize(dp(10)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
                 canvas.save(); canvas.clipRect(left + i * lane, top - dp(34), left + (i + 1) * lane, top);
-                canvas.drawText(parts[0], left + i * lane + dp(3), top - dp(21), paint);
+                axisLabel(canvas, parts[0], left + i * lane + dp(3), top - dp(21), paint, true);
                 String second = (parts.length > 1 ? parts[1] : "") + (isOwnName(name) ? " · TU" : "");
                 float width = paint.measureText(second); if (width > lane - dp(6)) paint.setTextSize(dp(10) * (lane - dp(6)) / width);
-                canvas.drawText(second, left + i * lane + dp(3), top - dp(7), paint); canvas.restore();
+                axisLabel(canvas, second, left + i * lane + dp(3), top - dp(7), paint, true); canvas.restore();
             }
             for (Shift s : data) { int i = people.indexOf(s.collaborator.isEmpty() ? "Collaboratore" : s.collaborator); float y1 = top + minutes(s.from) * (bottom-top)/(end-start), y2 = top + minutes(s.to)*(bottom-top)/(end-start); drawBlock(canvas, new RectF(left+i*lane+dp(3), y1, left+(i+1)*lane-dp(3), y2), s, false); }
         }
         private void drawByPerson(Canvas canvas, ArrayList<String> people, float left, float top, float right, float bottom, int start, int end) {
             float rowHeight = (bottom - top) / people.size();
             for (int i = 0; i < people.size(); i++) if (isOwnName(people.get(i))) highlightOwnBand(canvas, paint, new RectF(0, top + i * rowHeight, right, top + (i + 1) * rowHeight));
-            float row = (bottom-top)/people.size(); for (int hour=start/60; hour<=end/60; hour++) { float x=left+(hour*60-start)*(right-left)/(end-start); paint.setColor(Color.rgb(203,213,225)); canvas.drawLine(x, top, x, bottom, paint); paint.setColor(MUTED); paint.setTextSize(dp(9)); canvas.drawText(hour + ":00", x, top-dp(8), paint); }
-            for (int i=0;i<people.size();i++) { float y=top+i*row; paint.setColor(MUTED); paint.setTextSize(dp(11)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); canvas.drawText(people.get(i), dp(4), y+dp(18), paint); paint.setColor(Color.rgb(203,213,225)); canvas.drawLine(left,y+row,right,y+row,paint); }
+            float row = (bottom-top)/people.size(); for (int hour=start/60; hour<=end/60; hour++) { float x=left+(hour*60-start)*(right-left)/(end-start); paint.setColor(Color.rgb(203,213,225)); canvas.drawLine(x, top, x, bottom, paint); paint.setColor(MUTED); paint.setTextSize(dp(9)); axisLabel(canvas, hour + ":00", x, top-dp(8), paint, true); }
+            for (int i=0;i<people.size();i++) { float y=top+i*row; paint.setColor(MUTED); paint.setTextSize(dp(11)); paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD); axisLabel(canvas, people.get(i), dp(4), y+dp(18), paint, false); paint.setColor(Color.rgb(203,213,225)); canvas.drawLine(left,y+row,right,y+row,paint); }
             for (Shift s:data) { int i=people.indexOf(s.collaborator.isEmpty()?"Collaboratore":s.collaborator); float x1=left+minutes(s.from)*(right-left)/(end-start), x2=left+minutes(s.to)*(right-left)/(end-start); drawBlock(canvas,new RectF(x1,top+i*row+dp(4),x2,top+(i+1)*row-dp(4)),s,true); }
         }
         private int minutes(LocalDateTime time) { return time.getHour()*60+time.getMinute()-7*60; }
@@ -1760,7 +1922,6 @@ public class MainActivity extends Activity {
     private void renderTeamByCollaborator(LocalDate start, LocalDate end) {
         weekList.removeAllViews(); weekLabel.setText(teamWeeksLabel(start));
         long minutes = 0; for (Shift shift : shifts) minutes += Duration.between(shift.from, shift.to).toMinutes(); weekSummary.setText(shifts.size() + " turni · " + hours(minutes));
-        weekList.addView(teamOptions());
         Map<String, ArrayList<Shift>> byPerson = new HashMap<>(); for (Shift shift : shifts) byPerson.computeIfAbsent(shift.collaborator.isEmpty() ? "Collaboratore" : shift.collaborator, ignored -> new ArrayList<>()).add(shift);
         ArrayList<String> names = new ArrayList<>(byPerson.keySet()); names.sort(String::compareToIgnoreCase);
         for (String name : names) {
@@ -1839,9 +2000,9 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() { destroyed = true; if (setupController != null) setupController.destroy(); if (activeCalendarDialog != null) activeCalendarDialog.dismiss(); pendingCalendarSelection = null; if (updater != null) updater.destroy(); if (workday != null) workday.destroy(); authGeneration++; authHandler.removeCallbacksAndMessages(null); requestGeneration++; executor.shutdownNow(); portal.destroy(); super.onDestroy(); }
 
     private static class Shift {
-        LocalDateTime from, to; LocalDate date; String translation, abbreviation, collaborator, collaboratorId, typeId; int color; Integer fontColor;
+        LocalDateTime from, to; LocalDate date; String translation, abbreviation, collaborator, collaboratorId, typeId; int color; Integer fontColor; boolean absence, allDay, nonWorking;
         static Shift from(JSONObject object, Map<String, String> collaborators) throws Exception {
-            Shift shift = new Shift(); shift.from = LocalDateTime.parse(object.getString("fromHour")); shift.to = LocalDateTime.parse(object.getString("toHour"));
+            Shift shift = new Shift(); shift.from = LocalDateTime.parse(object.getString("fromHour")); shift.to = LocalDateTime.parse(object.getString("toHour")); shift.absence = object.optBoolean("absence"); shift.allDay = object.optBoolean("allDay"); shift.nonWorking = object.optBoolean("nonWorking");
             shift.date = LocalDate.parse(object.getString("date").substring(0, 10));
             JSONObject typology = object.optJSONObject("hourTypology");
             shift.translation = typology == null ? object.optString("translation", "Turno") : typology.optString("translation", object.optString("translation", "Turno"));
@@ -1858,6 +2019,7 @@ public class MainActivity extends Activity {
             return shift;
         }
         String typeLabel() { return abbreviation.isEmpty() ? translation : abbreviation + "-" + translation; }
+        String timeLabel() { return allDay ? "Tutta la giornata" : from.toLocalTime() + " – " + to.toLocalTime(); }
         String label() { String type = typeLabel(); return collaborator.isEmpty() ? type : collaborator + " · " + type; }
     }
 }

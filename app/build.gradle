@@ -14,8 +14,8 @@ for (url in [portalUrl, apiBaseUrl, effiplanOrigin]) {
         throw new GradleException('Configurare PORTAL_URL, API_BASE_URL ed EFFIPLAN_ORIGIN come origini HTTPS nei Secrets o in secrets.properties (ignorato da Git).')
     }
 }
-def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2031').toInteger()
-def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.31'
+def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2064').toInteger()
+def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.64'
 def keyPath = System.getenv('ANDROID_KEYSTORE_PATH') ?: new File(System.getProperty('user.home'), '.android/debug.keystore').absolutePath
 
 android { namespace 'it.giovaganzerli.planning'; compileSdk 35

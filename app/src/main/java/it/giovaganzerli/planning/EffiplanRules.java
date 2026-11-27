@@ -27,6 +27,8 @@ final class EffiplanRules {
         if ("OUT".equals(direction)) return "DEPARTURE";
         throw new IllegalArgumentException("Movimento non riconosciuto");
     }
+    /** Horoquartz event range end is exclusive; a Sunday–Saturday UI week must request the following Sunday. */
+    static java.time.LocalDate queryEndExclusive(java.time.LocalDate visibleEnd) { return visibleEnd.plusDays(1); }
     static boolean validSession(String token, String role, String user) {
         return token != null && token.length() <= 16000 && token.matches("[^\\x00-\\x20\\x7f]+")
             && user != null && user.length() <= 128 && user.matches("[^\\x00-\\x20\\x7f/]+")
