@@ -2,6 +2,7 @@ package it.giovaganzerli.planning;
 
 import java.text.Normalizer;
 import java.time.Duration;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -55,10 +56,18 @@ final class SwapSearch {
 
     static Result find(String user, LocalDateTime freeFrom, LocalDateTime freeTo,
                        List<Segment> planning, Map<String, EnumSet<Role>> skills) {
-        return findInternal(user, freeFrom, freeTo, planning, skills, null);
+        return find(user, freeFrom, freeTo, planning, skills, DayOfWeek.MONDAY);
+    }
+    static Result find(String user, LocalDateTime freeFrom, LocalDateTime freeTo,
+                       List<Segment> planning, Map<String, EnumSet<Role>> skills, DayOfWeek firstDay) {
+        return findInternal(user, freeFrom, freeTo, planning, skills, null, firstDay);
     }
     static Result findSelected(String user, LocalDateTime freeFrom, LocalDateTime freeTo,
                                List<Segment> planning, Map<String, EnumSet<Role>> skills, List<Segment> selected) {
+        return findSelected(user, freeFrom, freeTo, planning, skills, selected, DayOfWeek.MONDAY);
+    }
+    static Result findSelected(String user, LocalDateTime freeFrom, LocalDateTime freeTo,
+                               List<Segment> planning, Map<String, EnumSet<Role>> skills, List<Segment> selected, DayOfWeek firstDay) {
         if (selected.isEmpty()) { Result result = new Result(); result.message = "Seleziona almeno un turno."; return result; }
         LocalDate day = selected.get(0).start.toLocalDate();
         for (Segment s : selected) {
@@ -69,14 +78,14 @@ final class SwapSearch {
             for (Segment original : planning) if (original.person.equals(user) && original.start.equals(s.start) && original.end.equals(s.end) && original.service == s.service && original.label.equals(s.label)) { exists = true; break; }
             if (!exists) { Result result = new Result(); result.message = "I turni selezionati sono cambiati: ripeti la selezione."; return result; }
         }
-        return findInternal(user, freeFrom, freeTo, planning, skills, selected);
+        return findInternal(user, freeFrom, freeTo, planning, skills, selected, firstDay);
     }
     private static Result findInternal(String user, LocalDateTime freeFrom, LocalDateTime freeTo,
-                                       List<Segment> planning, Map<String, EnumSet<Role>> skills, List<Segment> selected) {
+                                       List<Segment> planning, Map<String, EnumSet<Role>> skills, List<Segment> selected, DayOfWeek firstDay) {
         Result result = new Result();
         if (!freeTo.isAfter(freeFrom)) { result.message = "L'orario finale deve essere successivo a quello iniziale."; return result; }
-        LocalDate monday = freeFrom.toLocalDate().minusDays(freeFrom.getDayOfWeek().getValue() - 1);
-        LocalDateTime weekStart = monday.atStartOfDay(), weekEnd = monday.plusDays(7).atStartOfDay();
+        LocalDate startDate = freeFrom.toLocalDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(firstDay));
+        LocalDateTime weekStart = startDate.atStartOfDay(), weekEnd = startDate.plusDays(7).atStartOfDay();
         if (freeFrom.isBefore(weekStart) || freeTo.isAfter(weekEnd)) { result.message = "Scegli un intervallo nella stessa settimana."; return result; }
         EnumSet<Role> ownSkills = skills.get(user);
         if (ownSkills == null) { result.message = "Configura prima le tue abilitazioni."; return result; }
@@ -95,7 +104,7 @@ final class SwapSearch {
             EnumSet<Role> theirSkills = skills.get(colleague);
             if (colleague.equals(user) || theirSkills.contains(Role.MANAGER) || !qualified(theirSkills, own)) continue;
             for (int day = 0; day < 7; day++) {
-                LocalDate date = monday.plusDays(day);
+                LocalDate date = startDate.plusDays(day);
                 List<Segment> available = new ArrayList<>();
                 for (Segment s : planning) if (s.person.equals(colleague) && s.start.toLocalDate().equals(date) && !s.start.isBefore(weekStart) && !s.end.isAfter(weekEnd) && enabled(ownSkills, s.service)) available.add(s);
                 available.sort(Comparator.comparing(s -> s.start));

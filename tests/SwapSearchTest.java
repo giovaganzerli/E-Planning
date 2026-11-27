@@ -1,6 +1,7 @@
 package it.giovaganzerli.planning;
 
 import java.time.LocalDateTime;
+import java.time.DayOfWeek;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
@@ -63,6 +64,20 @@ public class SwapSearchTest {
         List<SwapSearch.Segment> separated = Arrays.asList(shift("me", 24, 8, 10, SwapSearch.Service.SALES), shift("me", 24, 10, 12, SwapSearch.Service.SALES), shift("me", 24, 12, 14, SwapSearch.Service.SALES), shift("me", 26, 8, 10, SwapSearch.Service.SALES), shift("other", 26, 10, 16, SwapSearch.Service.SALES), shift("other", 24, 16, 20, SwapSearch.Service.SALES));
         SwapSearch.Result separatedResult = SwapSearch.findSelected("me", time(24, 8), time(24, 14), separated, skills(), Arrays.asList(separated.get(0), separated.get(2)));
         check(!separatedResult.candidates.isEmpty() && separatedResult.candidates.get(0).given.size() == 2 && separatedResult.candidates.get(0).given.get(0).minutes() + separatedResult.candidates.get(0).given.get(1).minutes() == 240, "unselected intervening shift is never silently exchanged");
+        List<SwapSearch.Segment> sundayToSaturday = Arrays.asList(shift("me", 22, 10, 16, SwapSearch.Service.SALES), shift("other", 28, 10, 16, SwapSearch.Service.SALES));
+        check(SwapSearch.findSelected("me", time(22, 10), time(22, 16), sundayToSaturday, skills(), Arrays.asList(sundayToSaturday.get(0)), DayOfWeek.SUNDAY).candidates.size() == 1, "Effiplan can exchange Sunday for Saturday in the same week");
+        check(SwapSearch.findSelected("me", time(22, 10), time(22, 16), sundayToSaturday, skills(), Arrays.asList(sundayToSaturday.get(0))).candidates.isEmpty(), "E-Planning Sunday is not in the following Monday-Sunday week");
+        List<SwapSearch.Segment> saturdayToSunday = Arrays.asList(shift("me", 28, 10, 16, SwapSearch.Service.SALES), shift("other", 29, 10, 16, SwapSearch.Service.SALES));
+        check(SwapSearch.findSelected("me", time(28, 10), time(28, 16), saturdayToSunday, skills(), Arrays.asList(saturdayToSunday.get(0)), DayOfWeek.SUNDAY).candidates.isEmpty(), "Effiplan cannot exchange Saturday for next Sunday");
+        check(SwapSearch.findSelected("me", time(28, 10), time(28, 16), saturdayToSunday, skills(), Arrays.asList(saturdayToSunday.get(0))).candidates.size() == 1, "E-Planning still allows Saturday-Sunday in its same week");
+        List<SwapSearch.Segment> sundayToPreviousSaturday = Arrays.asList(shift("me", 29, 10, 16, SwapSearch.Service.SALES), shift("other", 28, 10, 16, SwapSearch.Service.SALES));
+        check(SwapSearch.find("me", time(29, 10), time(29, 16), sundayToPreviousSaturday, skills(), DayOfWeek.SUNDAY).candidates.isEmpty(), "Sunday cannot reach back into Effiplan's previous week");
+        List<SwapSearch.Segment> yearEnd = Arrays.asList(
+            new SwapSearch.Segment("me", LocalDateTime.of(2027, 1, 2, 10, 0), LocalDateTime.of(2027, 1, 2, 16, 0), "Vendita", SwapSearch.Service.SALES),
+            new SwapSearch.Segment("other", LocalDateTime.of(2027, 1, 3, 10, 0), LocalDateTime.of(2027, 1, 3, 16, 0), "Vendita", SwapSearch.Service.SALES));
+        check(SwapSearch.find("me", yearEnd.get(0).start, yearEnd.get(0).end, yearEnd, skills(), DayOfWeek.SUNDAY).candidates.isEmpty(), "Effiplan week boundary also enforced across New Year");
+        check(SwapSearch.find("me", yearEnd.get(0).start, yearEnd.get(0).end, yearEnd, skills()).candidates.size() == 1, "ISO week boundary unchanged across New Year");
+        check(SwapSearch.find("me", time(28, 22), time(29, 2), saturdayToSunday, skills(), DayOfWeek.SUNDAY).message.contains("stessa settimana"), "interval crossing Sunday midnight is rejected rather than silently crossing weeks");
         System.out.println("SwapSearch: all rule tests passed");
     }
 }

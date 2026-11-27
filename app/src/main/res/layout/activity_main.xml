@@ -1,4 +1,4 @@
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:orientation="vertical" android:background="#F6F7FB" android:layout_width="match_parent" android:layout_height="match_parent">
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/appRoot" android:orientation="vertical" android:background="#172554" android:layout_width="match_parent" android:layout_height="match_parent">
     <LinearLayout android:id="@+id/header" android:orientation="horizontal" android:gravity="center_vertical" android:background="#172554" android:padding="24dp" android:layout_width="match_parent" android:layout_height="wrap_content">
         <ImageView android:src="@drawable/ic_app_logo" android:background="@drawable/bg_app_icon" android:padding="8dp" android:contentDescription="@string/app_name" android:layout_width="46dp" android:layout_height="46dp" />
         <LinearLayout android:orientation="vertical" android:layout_marginStart="12dp" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content">
@@ -11,7 +11,7 @@
             <View android:id="@+id/appMenuBadge" android:background="@drawable/bg_notification_dot" android:visibility="gone" android:importantForAccessibility="no" android:layout_gravity="top|end" android:layout_marginTop="3dp" android:layout_marginEnd="3dp" android:layout_width="10dp" android:layout_height="10dp" />
         </FrameLayout>
     </LinearLayout>
-    <LinearLayout android:id="@+id/planningContainer" android:orientation="vertical" android:paddingLeft="16dp" android:paddingRight="16dp" android:paddingTop="14dp" android:paddingBottom="8dp" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+    <LinearLayout android:id="@+id/planningContainer" android:orientation="vertical" android:background="#F6F7FB" android:paddingLeft="16dp" android:paddingRight="16dp" android:paddingTop="14dp" android:paddingBottom="8dp" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
         <LinearLayout android:orientation="vertical" android:background="@drawable/bg_summary" android:padding="14dp" android:layout_width="match_parent" android:layout_height="wrap_content">
             <LinearLayout android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
                 <Button android:id="@+id/previousPeriod" android:text="‹" android:textSize="24sp" android:textColor="#FFFFFF" android:background="@drawable/bg_period" android:layout_marginEnd="6dp" android:layout_width="36dp" android:layout_height="40dp" />
@@ -34,6 +34,7 @@
             </LinearLayout>
             <Button android:id="@+id/punchButton" android:text="Timbra" android:enabled="false" android:textAllCaps="false" android:textStyle="bold" android:textSize="13sp" android:textColor="#FFFFFF" android:background="@drawable/bg_punch_button" android:paddingLeft="12dp" android:paddingRight="12dp" android:minWidth="0dp" android:contentDescription="Registra la presenza di oggi" android:layout_width="wrap_content" android:layout_height="48dp" />
         </LinearLayout>
+        <Button android:id="@+id/populationSelector" android:text="Popolazione · Squadra predefinita" android:textAllCaps="false" android:textSize="13sp" android:textColor="#192A4A" android:background="@drawable/bg_filter" android:padding="10dp" android:layout_marginTop="10dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" />
         <ScrollView android:fillViewport="true" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="14dp">
             <LinearLayout android:id="@+id/weekList" android:orientation="vertical" android:paddingBottom="18dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
         </ScrollView>
@@ -43,6 +44,24 @@
         <Button android:id="@+id/openMonth" android:text="Mese" android:textSize="11sp" android:textAllCaps="false" android:textColor="#64748B" android:drawableTop="@drawable/ic_nav_month" android:drawablePadding="2dp" android:gravity="center" android:background="@drawable/bg_nav" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" />
         <Button android:id="@+id/openTeam" android:text="Squadra" android:textSize="11sp" android:textAllCaps="false" android:textColor="#64748B" android:drawableTop="@drawable/ic_nav_team" android:drawablePadding="2dp" android:gravity="center" android:background="@drawable/bg_nav" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" />
         <Button android:id="@+id/openSearch" android:text="Cerca cambio" android:textSize="11sp" android:textAllCaps="false" android:textColor="#64748B" android:drawableTop="@drawable/ic_nav_search" android:drawablePadding="2dp" android:gravity="center" android:background="@drawable/bg_nav" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" />
+    </LinearLayout>
+    <ScrollView android:id="@+id/portalChoicePage" android:fillViewport="true" android:background="#F6F7FB" android:visibility="gone" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <LinearLayout android:orientation="vertical" android:gravity="center_vertical" android:padding="24dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <ImageView android:src="@drawable/ic_app_logo" android:background="@drawable/bg_app_icon" android:padding="12dp" android:importantForAccessibility="no" android:layout_width="72dp" android:layout_height="72dp" />
+            <TextView android:text="E-PLANNING" android:textColor="#243B74" android:textStyle="bold" android:textSize="13sp" android:layout_marginTop="20dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:id="@+id/portalChoiceTitle" android:text="Il tuo portale di planning" android:textColor="#192A4A" android:textStyle="bold" android:textSize="30sp" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <TextView android:id="@+id/portalChoiceHelp" android:textColor="#64748B" android:textSize="15sp" android:lineSpacingExtra="3dp" android:layout_marginTop="12dp" android:layout_marginBottom="24dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <RadioGroup android:id="@+id/portalChoices" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
+                <RadioButton android:id="@+id/chooseEplanning" android:text="E-Planning\nNuovo portale" android:textColor="#192A4A" android:textSize="17sp" android:background="@drawable/bg_day" android:padding="16dp" android:minHeight="88dp" android:layout_marginBottom="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+                <RadioButton android:id="@+id/chooseEffiplan" android:text="Effiplan\nPortale Horoquartz" android:textColor="#192A4A" android:textSize="17sp" android:background="@drawable/bg_day" android:padding="16dp" android:minHeight="88dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            </RadioGroup>
+            <Button android:id="@+id/confirmPortalChoice" android:text="Continua" android:enabled="false" android:textAllCaps="false" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="16sp" android:background="@drawable/bg_punch_button" android:layout_marginTop="24dp" android:layout_width="match_parent" android:layout_height="52dp" />
+            <Button android:id="@+id/cancelPortalChoice" android:text="Annulla" android:textAllCaps="false" android:textColor="#243B74" android:background="@android:color/transparent" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="48dp" />
+        </LinearLayout>
+    </ScrollView>
+    <LinearLayout android:id="@+id/loginPortalBar" android:orientation="horizontal" android:gravity="center_vertical" android:padding="12dp" android:background="#172554" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <TextView android:id="@+id/loginPortalName" android:textColor="#FFFFFF" android:textSize="15sp" android:textStyle="bold" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" />
+        <Button android:id="@+id/changeLoginPortal" android:text="Cambia portale" android:textAllCaps="false" android:textSize="12sp" android:textColor="#FFFFFF" android:background="@drawable/bg_logout" android:paddingLeft="12dp" android:paddingRight="12dp" android:layout_width="wrap_content" android:layout_height="48dp" />
     </LinearLayout>
     <WebView android:id="@+id/portal" android:visibility="gone" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
 </LinearLayout>

@@ -1,5 +1,36 @@
 # Novità
 
+- Effiplan · settimana da domenica a sabato.
+- Ore · riepiloghi e calendario allineati alla settimana Effiplan.
+- Cambi turno · ricerca entro la stessa settimana domenica–sabato.
+- E-Planning · resta invariata la settimana lunedì–domenica.
+
+## Correzioni accesso e squadra precedenti
+
+- Effiplan · ripristinati nomi e collaboratori della squadra.
+- Squadra · selettore popolazione visibile solo in questa sezione.
+- Accesso · scelta del portale in una pagina dedicata.
+- Layout · testata login e contenuti rispettano le barre Android.
+
+## Integrazione portali precedente
+
+- Portale · scelta iniziale tra E-Planning ed Effiplan.
+- Popolazione · squadre e negozio da API, con ricerca e selezione.
+- Effiplan · nomi e colori dinamici; planning personale e ricerca cambi.
+- Timbratura · supporto Effiplan; preferenze separate per account.
+
+## Dettagli integrazione portali
+
+- Effiplan: planning collettivo con tutte le pagine della squadra e stesse regole di ricerca cambi di E-Planning.
+- Effiplan: timbratura solo su richiesta dell’utente, con verifica dei permessi e dei movimenti; nessun reinvio automatico.
+- Assenze Effiplan usate come vincoli nella ricerca, non importate nel calendario come turni.
+- Modelli e dizionari API determinano colori di sfondo e testo dei turni, senza palette o squadre fisse.
+- Popolazione predefinita del profilo, altre sezioni, preferiti e tutta la popolazione autorizzata selezionabili nell’app.
+- Classificazione dei tipi di turno configurabile nelle Impostazioni, senza cambiare nomi o colori ufficiali.
+- E-Planning: funzioni esistenti mantenute.
+
+## Aggiornamenti precedenti
+
 - Aggiornamenti · controllo automatico e pallini di notifica nel menu.
 - Novità · riepiloghi brevi e schematici.
 - Timbratura · conferma con data e ora, senza doppi invii.

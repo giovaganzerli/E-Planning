@@ -40,6 +40,7 @@ final class WorkdayController {
     private volatile int generation;
     private volatile boolean destroyed;
     private String token = "", owner = "";
+    private EffiplanApi effiplan;
     private boolean visible, resumed, busy;
     private Snapshot snapshot;
     private final Runnable poll = new Runnable() {
@@ -57,9 +58,14 @@ final class WorkdayController {
         display("Attendi", "Verifica disponibilità…", false, false);
     }
     void session(String value, String collaborator) {
-        if (token.equals(value) && owner.equals(collaborator)) return;
+        if (token.equals(value) && owner.equals(collaborator) && effiplan == null) return;
+        effiplan = null;
         generation++; token = value; owner = collaborator; snapshot = null; busy = false;
         restart();
+    }
+    void effiplanSession(EffiplanApi client) {
+        session("effiplan", "effiplan:" + client.scopeKey() + ":" + client.user);
+        effiplan = client;
     }
     void visible(boolean value) { visible = value; restart(); }
     void resume() { resumed = true; restart(); }
@@ -74,9 +80,10 @@ final class WorkdayController {
         if (!running() || busy) return;
         busy = true;
         final int version = generation; final String bearer = token, user = owner;
+        final EffiplanApi client = effiplan;
         executor.execute(() -> {
             try {
-                Snapshot loaded = load(bearer, user);
+                Snapshot loaded = load(bearer, user, client);
                 reconcile(user, loaded);
                 activity.runOnUiThread(() -> {
                     if (!valid(version)) return;
@@ -127,13 +134,27 @@ final class WorkdayController {
             display("Timbra", "Disponibile durante il prossimo turno.", false, false);
         }
     }
-    private Snapshot load(String bearer, String user) throws Exception {
-        JSONObject status = get(BASE + "recordWorkDay/recordWorkDayStatus", bearer);
+    private Snapshot load(String bearer, String user, EffiplanApi client) throws Exception {
+        JSONObject status;
+        Object planning;
+        if (client != null) {
+            LocalDateTime now = LocalDateTime.now(WorkdayRules.ZONE);
+            java.time.LocalDate today = now.toLocalDate();
+            planning = client.planning(today.minusDays(1), today.plusDays(1));
+            List<WorkdayRules.Turn> available = new ArrayList<>();
+            collectTurns(planning, client.user, available);
+            WorkdayRules.Turn turn = WorkdayRules.currentTurn(available, now);
+            JSONObject attendance = client.attendance(today.minusDays(1), today);
+            status = EffiplanData.movements(attendance.getJSONObject("data"), client.user, turn == null ? today.atStartOfDay() : turn.start, now);
+            if (!attendance.getBoolean("allowed")) status.put("status", "");
+        } else {
+            status = get(BASE + "recordWorkDay/recordWorkDayStatus", bearer);
+            planning = new JSONTokener(http(BASE + "planning/collaboratorWeek", bearer, null).body).nextValue();
+        }
         if (!status.has("status") || status.optBoolean("success", true) == false) throw new Exception("Stato non leggibile");
-        Object planning = new JSONTokener(http(BASE + "planning/collaboratorWeek", bearer, null).body).nextValue();
         if (planning instanceof JSONObject && !((JSONObject) planning).optBoolean("success", true)) throw new Exception("Planning non disponibile");
         List<WorkdayRules.Turn> turns = new ArrayList<>();
-        collectTurns(planning, user, turns);
+        collectTurns(planning, client == null ? user : client.user, turns);
         Snapshot result = new Snapshot();
         result.status = status.optString("status", "");
         result.turn = WorkdayRules.currentTurn(turns, LocalDateTime.now(WorkdayRules.ZONE));
@@ -198,36 +219,44 @@ final class WorkdayController {
         if (!running() || busy || snapshot == null || snapshot.turn == null || !button.isEnabled()) return;
         final int version = generation;
         final String bearer = token, user = owner;
+        final EffiplanApi client = effiplan;
         final WorkdayRules.Turn selected = snapshot.turn;
         busy = true;
         display("Invio…", "Verifica e registrazione in corso…", false, false);
         executor.execute(() -> {
             try {
-                Snapshot fresh = load(bearer, user);
+                Snapshot fresh = load(bearer, user, client);
                 reconcile(user, fresh);
                 JSONObject previous = stored(user, selected);
                 if (!valid(version) || fresh.turn == null || !selected.key().equals(fresh.turn.key()) || !WorkdayRules.permitted(fresh.status) || previous.optBoolean("confirmed") || previous.optBoolean("pending")) {
                     finish(version, fresh); return;
                 }
-                String uid = new JSONObject(new String(Base64.getUrlDecoder().decode(bearer.split("\\.")[1]), StandardCharsets.UTF_8)).optString("uid", "");
-                if (uid.isEmpty() || uid.length() > 128) throw new Exception("Utente non riconosciuto");
                 String command = UUID.randomUUID().toString();
-                JSONObject body = new JSONObject().put("uuid", command).put("actorDto", new JSONObject().put("name", JSONObject.NULL).put("username", uid).put("email", JSONObject.NULL));
+                JSONObject body = null;
+                if (client == null) {
+                    String uid = new JSONObject(new String(Base64.getUrlDecoder().decode(bearer.split("\\.")[1]), StandardCharsets.UTF_8)).optString("uid", "");
+                    if (uid.isEmpty() || uid.length() > 128) throw new Exception("Utente non riconosciuto");
+                    body = new JSONObject().put("uuid", command).put("actorDto", new JSONObject().put("name", JSONObject.NULL).put("username", uid).put("email", JSONObject.NULL));
+                }
                 JSONObject record = new JSONObject().put("pending", true).put("confirmed", false).put("command", command).put("action", fresh.status).put("before", new JSONArray(fresh.records));
                 save(user, selected, record);
                 if (!valid(version)) {
                     prefs.edit().remove(key(user, selected)).commit();
                     return;
                 }
-                Reply reply = http(BASE + "recordWorkDay/update", bearer, body);
-                JSONObject result = new JSONObject(reply.body);
-                if (!WorkdayRules.accepted(reply.code, Boolean.TRUE.equals(result.opt("success")))) {
-                    if (Boolean.FALSE.equals(result.opt("success"))) prefs.edit().remove(key(user, selected)).commit();
-                    throw new Exception("Registrazione non confermata");
+                if (client != null) {
+                    client.punch();
+                } else {
+                    Reply reply = http(BASE + "recordWorkDay/update", bearer, body);
+                    JSONObject result = new JSONObject(reply.body);
+                    if (!WorkdayRules.accepted(reply.code, Boolean.TRUE.equals(result.opt("success")))) {
+                        if (Boolean.FALSE.equals(result.opt("success"))) prefs.edit().remove(key(user, selected)).commit();
+                        throw new Exception("Registrazione non confermata");
+                    }
                 }
                 record.put("pending", false).put("confirmed", true).put("at", LocalDateTime.now(WorkdayRules.ZONE).toString()).put("serverTime", false);
                 save(user, selected, record);
-                try { fresh = load(bearer, user); reconcile(user, fresh); } catch (Exception ignored) { }
+                try { fresh = load(bearer, user, client); reconcile(user, fresh); } catch (Exception ignored) { }
                 finish(version, fresh);
             } catch (Exception e) {
                 activity.runOnUiThread(() -> {

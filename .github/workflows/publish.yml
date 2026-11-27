@@ -21,6 +21,7 @@ jobs:
     env:
       PORTAL_URL: ${{ secrets.PORTAL_URL }}
       API_BASE_URL: ${{ secrets.API_BASE_URL }}
+      EFFIPLAN_ORIGIN: ${{ secrets.EFFIPLAN_ORIGIN }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -85,14 +86,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/rule-tests"
-          javac -d "$RUNNER_TEMP/rule-tests" app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules,WorkdayRules}.java tests/{SwapSearchTest,UpdateRulesTest,WorkdayRulesTest}.java
+          javac -d "$RUNNER_TEMP/rule-tests" app/src/main/java/it/giovaganzerli/planning/{SwapSearch,UpdateRules,WorkdayRules,PlanningPortal,EffiplanRules}.java tests/{SwapSearchTest,UpdateRulesTest,WorkdayRulesTest,PortalRulesTest}.java
           java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.SwapSearchTest
           java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.UpdateRulesTest
           java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.WorkdayRulesTest
+          java -cp "$RUNNER_TEMP/rule-tests" it.giovaganzerli.planning.PortalRulesTest
       - name: Lint and build
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon :app:lintDebug
+          ./gradlew --no-daemon :app:testEffiplanData
           ./gradlew --no-daemon :app:publishDebugApk
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify app/build/outputs/apk/debug/*.apk
           python3 scripts/prepare_release.py

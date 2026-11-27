@@ -7,14 +7,21 @@ def configured = { name -> System.getenv(name) ?: localSecrets.getProperty(name,
 def quoted = { value -> '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"' }
 def portalUrl = configured('PORTAL_URL')
 def apiBaseUrl = configured('API_BASE_URL')
+def effiplanOrigin = configured('EFFIPLAN_ORIGIN')
 for (url in [portalUrl, apiBaseUrl]) {
     def uri = new URI(url)
     if (uri.scheme != 'https' || !uri.host || uri.rawUserInfo || uri.query || uri.fragment || (uri.path && uri.path != '/')) {
         throw new GradleException('Configurare PORTAL_URL e API_BASE_URL come origini HTTPS nei Secrets o in secrets.properties (ignorato da Git).')
     }
 }
-def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2008').toInteger()
-def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.8'
+if (effiplanOrigin) {
+    def uri = new URI(effiplanOrigin)
+    if (uri.scheme != 'https' || !uri.host || uri.rawUserInfo || uri.query || uri.fragment || (uri.path && uri.path != '/')) {
+        throw new GradleException('EFFIPLAN_ORIGIN deve essere una origine HTTPS senza percorsi.')
+    }
+}
+def buildNumber = (System.getenv('APP_VERSION_CODE') ?: '2018').toInteger()
+def buildVersion = System.getenv('APP_VERSION_NAME') ?: '0.5.18'
 def keyPath = System.getenv('ANDROID_KEYSTORE_PATH') ?: new File(System.getProperty('user.home'), '.android/debug.keystore').absolutePath
 
 android { namespace 'it.giovaganzerli.planning'; compileSdk 35
@@ -23,6 +30,7 @@ android { namespace 'it.giovaganzerli.planning'; compileSdk 35
         applicationId 'it.giovaganzerli.planning'; minSdk 26; targetSdk 35; versionCode buildNumber; versionName buildVersion
         buildConfigField 'String', 'PORTAL_URL', quoted(portalUrl.replaceAll('/$', ''))
         buildConfigField 'String', 'API_BASE_URL', quoted(apiBaseUrl.replaceAll('/$', ''))
+        buildConfigField 'String', 'EFFIPLAN_ORIGIN', quoted(effiplanOrigin.replaceAll('/$', ''))
         buildConfigField 'String', 'UPDATE_REPOSITORY', quoted('giovaganzerli/E-Planning')
     }
     signingConfigs {
@@ -47,6 +55,25 @@ tasks.register('generateReleaseNotes') {
     }
 }
 tasks.named('preBuild') { dependsOn 'generateReleaseNotes' }
+
+// JVM-only synthetic fixtures; this dependency is not packaged in the Android app.
+configurations { effiplanFixtures }
+dependencies { effiplanFixtures 'org.json:json:20240303' }
+tasks.register('compileEffiplanFixtures', JavaCompile) {
+    source files('src/main/java/it/giovaganzerli/planning/EffiplanData.java',
+        'src/main/java/it/giovaganzerli/planning/EffiplanRules.java',
+        'src/main/java/it/giovaganzerli/planning/WorkdayRules.java',
+        'src/main/java/it/giovaganzerli/planning/SwapSearch.java',
+        rootProject.file('tests/EffiplanDataTest.java'))
+    classpath = configurations.effiplanFixtures
+    destinationDirectory = layout.buildDirectory.dir('effiplan-fixtures')
+    options.release = 17
+}
+tasks.register('testEffiplanData', JavaExec) {
+    dependsOn 'compileEffiplanFixtures'
+    classpath = files(layout.buildDirectory.dir('effiplan-fixtures')) + configurations.effiplanFixtures
+    mainClass = 'it.giovaganzerli.planning.EffiplanDataTest'
+}
 
 android.applicationVariants.all { variant ->
     if (variant.buildType.name == 'debug') {
